@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const multer = require('multer');
 
 const ThreatScan = require('./models/ThreatScan');
 const { analyzeThreat } = require('./services/aiEngine');
@@ -12,7 +13,12 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// In-memory fallback if MongoDB Atlas is not yet connected
+// Configure Multer for in-memory image uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
+
 let inMemoryScans = [];
 
 // MongoDB Atlas Connection
@@ -28,8 +34,6 @@ if (MONGO_URI && !MONGO_URI.includes("YOUR_PASSWORD")) {
     .catch((err) => {
       console.warn("⚠️ [MongoDB Atlas] Could not connect, running in memory-mode:", err.message);
     });
-} else {
-  console.log("ℹ️ [MongoDB Atlas] MONGO_URI not configured yet. Operating in local memory mode.");
 }
 
 // ----------------- API ENDPOINTS -----------------
@@ -40,27 +44,30 @@ app.get('/api/health', (req, res) => {
     status: "online",
     system: "CyberShield AI Backend (CTBF-AI-11)",
     database: isMongoConnected ? "MongoDB Atlas (Connected)" : "Local In-Memory Mode",
-    aiEngine: process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.includes("YOUR_") ? "Gemini 1.5 Flash (Active)" : "Heuristic Rules (Active)"
+    features: ["Text Analysis", "Multimodal Image/Screenshot OCR", "Live DNS MX Audit", "MCA Verification"]
   });
 });
 
-// 2. Scan Threat Endpoint (Core requirement)
-app.post('/api/scan', async (req, res) => {
+// 2. Scan Threat Endpoint (Supports JSON Text OR Form-Data Image Upload)
+app.post('/api/scan', upload.single('image'), async (req, res) => {
   try {
-    const { text } = req.body;
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: "Missing 'text' in request body." });
+    const text = req.body.text || (req.file ? `[Uploaded Image: ${req.file.originalname}]` : "");
+    const imageBuffer = req.file ? req.file.buffer : null;
+    const mimeType = req.file ? req.file.mimetype : null;
+
+    if (!text && !imageBuffer) {
+      return res.status(400).json({ error: "Please provide either 'text' or an uploaded 'image' screenshot." });
     }
 
-    // Run AI & MCA Verification
-    const analysis = await analyzeThreat(text, process.env.GEMINI_API_KEY);
+    // Run Multimodal AI & MCA Verification
+    const analysis = await analyzeThreat(text, process.env.GEMINI_API_KEY, imageBuffer, mimeType);
 
-    // Save to Database (MongoDB or Memory)
+    // Save to Database (MongoDB Atlas)
     let savedRecord = null;
     if (isMongoConnected) {
       try {
         savedRecord = await ThreatScan.create({
-          rawInput: text,
+          rawInput: text + (req.file ? ` (Image: ${req.file.originalname})` : ""),
           riskScore: analysis.riskScore,
           verdict: analysis.verdict,
           category: analysis.category,
@@ -140,7 +147,7 @@ app.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`🚀 [CyberShield AI] Backend running on http://localhost:${PORT}`);
   console.log(`📡 Endpoints:`);
-  console.log(`   - POST http://localhost:${PORT}/api/scan`);
+  console.log(`   - POST http://localhost:${PORT}/api/scan (Text OR Image Upload)`);
   console.log(`   - GET  http://localhost:${PORT}/api/reports`);
   console.log(`   - GET  http://localhost:${PORT}/api/health`);
   console.log(`======================================================\n`);

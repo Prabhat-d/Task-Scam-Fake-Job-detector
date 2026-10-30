@@ -1,3 +1,33 @@
+<<<<<<< HEAD
 node_modules
 dist
 .env.local
+=======
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Environment variables (NEVER push this to GitHub)
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+
+# Build outputs
+dist/
+build/
+.next/
+
+# IDE & OS
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+>>>>>>> a98bc95bad35c556b90e32448e320f4d029264da

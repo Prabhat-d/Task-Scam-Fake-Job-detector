@@ -43,12 +43,26 @@ export default function Live() {
 
   const connected = !!session.data?.connected;
 
-  // Start the stream (in mock mode this replays a scripted Telegram scam chat).
+  // Start the live Telegram scam stream (socket.io)
   useEffect(() => {
     if (!connected) return undefined;
     const s = getSocket();
-    s?.emit('live:start');
-    return () => s?.emit('live:stop');
+    if (!s) return undefined;
+
+    const startStream = () => {
+      s.emit('live:start');
+    };
+
+    if (s.connected) {
+      startStream();
+    } else {
+      s.once('connect', startStream);
+    }
+
+    return () => {
+      s.off('connect', startStream);
+      s.emit('live:stop');
+    };
   }, [connected]);
 
   useSocketEvent('live:message', (m) => {
@@ -114,7 +128,7 @@ export default function Live() {
         </div>
         <div className="flex flex-wrap gap-2">
           {notifPerm === 'default' && <Button variant="secondary" size="sm" icon={BellRing} onClick={askNotif}>{t('live.enableAlerts')}</Button>}
-          {USE_MOCK && connected && <Button variant="secondary" size="sm" icon={RotateCcw} onClick={replay}>{t('live.replay')}</Button>}
+          {connected && <Button variant="secondary" size="sm" icon={RotateCcw} onClick={replay}>{t('live.replay')}</Button>}
         </div>
       </div>
 

@@ -7,19 +7,31 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_U
 let socket = null;
 
 /**
- * Connects after login. The httpOnly auth cookie is sent automatically (withCredentials).
- * In mock mode a local event emitter simulates the server.
+ * Connects to the real backend socket or simulated mock socket.
+ * The httpOnly auth cookie is sent automatically (withCredentials).
  */
 export function connectSocket() {
-  if (socket) return socket;
+  if (socket) {
+    if (!socket.connected && !USE_MOCK) socket.connect();
+    return socket;
+  }
   socket = USE_MOCK
     ? createMockSocket()
-    : io(SOCKET_URL, { withCredentials: true, autoConnect: false, transports: ['websocket', 'polling'] });
-  socket.connect();
+    : io(SOCKET_URL, {
+        withCredentials: true,
+        autoConnect: true,
+        transports: ['polling', 'websocket'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+      });
   return socket;
 }
 
 export function getSocket() {
+  if (!socket) {
+    return connectSocket();
+  }
   return socket;
 }
 

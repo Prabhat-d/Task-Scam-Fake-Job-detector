@@ -1,4 +1,4 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const { verifyCompanyAgainstMCA } = require("./mcaVerifier");
 
 const SYSTEM_PROMPT = `
@@ -38,23 +38,25 @@ Context guidelines:
 `;
 
 async function analyzeThreat(rawText, apiKey) {
-  // Extract entities using regex for deterministic fallback
+  // Extract entities using regex for deterministic verification & fallback
   const phones = rawText.match(/(?:\+91[\-\s]?)?[6789]\d{9}/g) || [];
   const upis = (rawText.match(/[\w\.\-]+@[a-zA-Z]{2,}/g) || []).filter(u => 
     !["gmail.com", "yahoo.com", "outlook.com"].some(p => u.includes(p))
   );
   const telegramHandles = rawText.match(/t\.me\/[\w\_]+|@[\w\_]+/g) || [];
 
-  if (apiKey && apiKey !== "YOUR_GEMINI_API_KEY_HERE") {
+  if (apiKey && !apiKey.includes("YOUR_")) {
     try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
-        generationConfig: { responseMimeType: "application/json" }
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash-lite",
+        contents: `${SYSTEM_PROMPT}\n\nCONTENT TO ANALYZE:\n${rawText}`,
+        config: {
+          responseMimeType: "application/json"
+        }
       });
 
-      const response = await model.generateContent(`${SYSTEM_PROMPT}\n\nCONTENT TO ANALYZE:\n${rawText}`);
-      const parsed = JSON.parse(response.response.text());
+      const parsed = JSON.parse(response.text);
 
       // Run deterministic MCA verification on claimed company
       const mcaResult = verifyCompanyAgainstMCA(parsed.claimedCompany, rawText);
@@ -75,11 +77,11 @@ async function analyzeThreat(rawText, apiKey) {
         }
       };
     } catch (err) {
-      console.warn("⚠️ Gemini API error, falling back to deterministic heuristic rules:", err.message);
+      console.warn("⚠️ Gemini API notice, falling back to deterministic heuristic rules:", err.message);
     }
   }
 
-  // Robust Heuristic Fallback (Runs if no API key is provided or network drops)
+  // Robust Heuristic Fallback (Runs if network drops or offline)
   const lower = rawText.toLowerCase();
   const isGenuine = lower.includes("infosys") && lower.includes("systems engineer") && !lower.includes("deposit");
 

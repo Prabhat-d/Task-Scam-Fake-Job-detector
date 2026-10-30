@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import CallHelplineButton from '../components/common/CallHelplineButton.jsx';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Link2, Copy, Radio, RotateCcw, FileWarning, ShieldAlert, Bot, BellRing, MessagesSquare } from 'lucide-react';
+import { Send, Link2, Copy, Radio, RotateCcw, FileWarning, ShieldAlert, Bot, BellRing, MessagesSquare, Monitor } from 'lucide-react';
 import Card from '../components/common/Card.jsx';
 import Button from '../components/common/Button.jsx';
 import Badge from '../components/common/Badge.jsx';
@@ -13,6 +13,7 @@ import ChatStream from '../components/live/ChatStream.jsx';
 import LiveRiskMeter from '../components/live/LiveRiskMeter.jsx';
 import StageTracker from '../components/result/StageTracker.jsx';
 import NextMoveAlert from '../components/result/NextMoveAlert.jsx';
+import ScreenGuardian from '../components/live/ScreenGuardian.jsx';
 import { useAsync } from '../hooks/useAsync.js';
 import { useSocketEvent } from '../hooks/useSocketEvent.js';
 import { liveService } from '../services/liveService.js';
@@ -40,6 +41,7 @@ export default function Live() {
   const [risk, setRisk] = useState(0);
   const [stage, setStage] = useState(-1);
   const [notifPerm, setNotifPerm] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'denied');
+  const [mode, setMode] = useState('screen');
 
   const connected = !!session.data?.connected;
 
@@ -132,7 +134,43 @@ export default function Live() {
         </div>
       </div>
 
-      {/* Telegram connection */}
+      {/* Live Mode Navigation Tabs */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
+        <button
+          type="button"
+          onClick={() => setMode('screen')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            mode === 'screen'
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
+              : 'bg-page hover:bg-page/80 text-subtle border border-line'
+          }`}
+        >
+          <Monitor size={16} />
+          <span>Real-Time Screen Guardian</span>
+          <span className="badge badge-success text-[10px] px-1.5 py-0.2">Active Protection</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMode('simulator')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            mode === 'simulator'
+              ? 'bg-primary text-white shadow-md shadow-primary/20'
+              : 'bg-page hover:bg-page/80 text-subtle border border-line'
+          }`}
+        >
+          <Bot size={16} />
+          <span>Telegram Scenario Simulator</span>
+        </button>
+      </div>
+
+      {/* Screen Guardian Mode */}
+      {mode === 'screen' && <ScreenGuardian />}
+
+      {/* Simulated Telegram Scenario Mode */}
+      {mode === 'simulator' && (
+        <div className="space-y-6">
+          {/* Telegram connection */}
       <Card title={t('live.botTitle')} subtitle={t('live.botSub')} icon={Bot} actions={session.data && <Badge tone={connected ? 'success' : 'neutral'}>{connected ? t('live.statusConnected') : t('live.statusNotConnected')}</Badge>}>
         {session.loading ? (
           <SkeletonRows rows={2} />
@@ -186,5 +224,7 @@ export default function Live() {
         </div>
       </div>
     </div>
+  )}
+</div>
   );
 }

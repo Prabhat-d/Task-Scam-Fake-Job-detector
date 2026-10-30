@@ -9,7 +9,7 @@ const multer = require('multer');
 const { Server } = require('socket.io');
 
 const ThreatScan = require('./models/ThreatScan');
-const { analyzeThreat } = require('./services/aiEngine');
+const { analyzeThreat, analyzeScreenCapture } = require('./services/aiEngine');
 const { handleChat } = require('./services/chatEngine');
 const { verifyCompanyAgainstMCA, performLiveDnsLookup } = require('./services/mcaVerifier');
 
@@ -30,7 +30,8 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Configure Multer for in-memory image uploads
 const upload = multer({
@@ -629,6 +630,41 @@ app.post('/api/live/connect-telegram', (req, res) => {
     deepLink: 'https://t.me/CyberShieldLiveBot?start=u_1001',
     connectedAt: new Date().toISOString()
   });
+});
+
+// 10B. Real-Time Screen Guardian AI Scanner (Inspects Active Screen / Window)
+app.post('/api/live/screen-scan', upload.any(), async (req, res) => {
+  try {
+    let imageBuffer = null;
+    let mimeType = 'image/jpeg';
+
+    if (req.files && req.files.length > 0) {
+      imageBuffer = req.files[0].buffer;
+      mimeType = req.files[0].mimetype || 'image/jpeg';
+    } else if (req.body && req.body.imageBase64) {
+      const b64Data = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      imageBuffer = Buffer.from(b64Data, 'base64');
+      const match = req.body.imageBase64.match(/^data:(image\/\w+);base64,/);
+      if (match) mimeType = match[1];
+    }
+
+    if (!imageBuffer) {
+      return res.status(400).json({ error: 'No image data provided. Provide imageBase64 or multipart file.' });
+    }
+
+    console.log(`🛡️ [Screen Guardian] Analyzing live screen frame (${(imageBuffer.length / 1024).toFixed(1)} KB)...`);
+    const result = await analyzeScreenCapture(imageBuffer, mimeType, process.env.GEMINI_API_KEY);
+    console.log(`🛡️ [Screen Guardian] Verdict: ${result.verdict} (Risk: ${result.riskScore}) on ${result.detectedApp}`);
+
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      ...result
+    });
+  } catch (err) {
+    console.error('❌ [Screen Guardian Error]:', err);
+    res.status(500).json({ error: 'Screen analysis failed', details: err.message });
+  }
 });
 
 // 11. Active Scam Headlines & Live Alerts (Matches Dashboard.jsx and Top Ticker)

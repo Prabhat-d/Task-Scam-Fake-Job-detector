@@ -289,7 +289,33 @@ app.get('/api/scans', async (req, res) => {
   }
 });
 
-// 5. Single Scan Details (for /result/:scanId)
+// 5. Scan Status Endpoint (Required by /processing/:scanId)
+app.get('/api/scans/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let record = null;
+    if (isMongoConnected) {
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        record = await ThreatScan.findById(id);
+      } else {
+        record = await ThreatScan.findOne({ scanId: id });
+      }
+    }
+    if (!record) {
+      record = inMemoryScans.find(s => s.scanId === id || s.id === id);
+    }
+    res.json({
+      status: 'completed',
+      step: 4,
+      scanId: id,
+      thumbnail: record?.thumbnail || null
+    });
+  } catch (err) {
+    res.json({ status: 'completed', step: 4, scanId: req.params.id });
+  }
+});
+
+// 5b. Single Scan Details (for /result/:scanId)
 app.get('/api/scans/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -310,6 +336,24 @@ app.get('/api/scans/:id', async (req, res) => {
     res.json(adaptScanForFrontend(record));
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch scan", details: err.message });
+  }
+});
+
+// 5c. Delete Scan
+app.delete('/api/scans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (isMongoConnected) {
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        await ThreatScan.findByIdAndDelete(id);
+      } else {
+        await ThreatScan.findOneAndDelete({ scanId: id });
+      }
+    }
+    inMemoryScans = inMemoryScans.filter(s => s.scanId !== id && s.id !== id);
+    res.json({ success: true, id });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete scan", details: err.message });
   }
 });
 

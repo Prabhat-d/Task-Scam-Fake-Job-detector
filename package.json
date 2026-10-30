@@ -1,0 +1,35 @@
+{
+  "name": "jobkavach-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "JobKavach – AI task-scam and fake job-offer detector (frontend). DAXDEV Team.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "i18next": "^23.16.4",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.454.0",
+    "qrcode.react": "^4.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-dropzone": "^14.3.5",
+    "react-hot-toast": "^2.4.1",
+    "react-i18next": "^15.1.0",
+    "react-router-dom": "^6.27.0",
+    "recharts": "^2.13.3",
+    "socket.io-client": "^4.8.1",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10"
+  }
+}

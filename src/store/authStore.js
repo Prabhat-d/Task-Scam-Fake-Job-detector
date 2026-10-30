@@ -41,15 +41,27 @@ export const useAuthStore = create((set, get) => ({
   },
 
   login: async (credentials) => {
-    const user = await authService.login(credentials);
-    get().setSession(user);
-    return user;
+    const res = await authService.login(credentials);
+    if (res?.user) get().setSession(res.user);
+    return res;
   },
 
   register: async (payload) => {
-    const user = await authService.register(payload);
-    get().setSession(user);
-    return user;
+    const res = await authService.register(payload);
+    if (res?.user) get().setSession(res.user);
+    return res;
+  },
+
+  googleLogin: async (googlePayload) => {
+    const res = await authService.googleLogin(googlePayload);
+    if (res?.user) get().setSession(res.user);
+    return res;
+  },
+
+  verifyOtp: async (payload) => {
+    const res = await authService.verifyOtp(payload);
+    if (res?.user) get().setSession(res.user);
+    return res;
   },
 
   logout: async () => {

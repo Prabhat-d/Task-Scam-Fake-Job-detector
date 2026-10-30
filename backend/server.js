@@ -962,6 +962,16 @@ io.on('connection', (socket) => {
   });
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ [Error] Port ${PORT} is already occupied by another running instance.`);
+    console.error(`👉 Double-click 'start_backend.bat' in the project folder to auto-free port ${PORT} and start cleanly.\n`);
+    process.exit(1);
+  } else {
+    console.error('Server error:', err);
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`🚀 [CyberShield AI] Backend running on http://localhost:${PORT}`);

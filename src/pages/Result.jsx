@@ -17,6 +17,10 @@ import EntityList from '../components/result/EntityList.jsx';
 import ExplanationCard from '../components/result/ExplanationCard.jsx';
 import ActionBar from '../components/result/ActionBar.jsx';
 import FilesGallery from '../components/result/FilesGallery.jsx';
+import VerdictReasons from '../components/result/VerdictReasons.jsx';
+import DownloadReportButton from '../components/result/DownloadReportButton.jsx';
+import { useAuthStore } from '../store/authStore.js';
+import { isAdmin } from '../utils/roles.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { scansService } from '../services/scansService.js';
 
@@ -39,12 +43,18 @@ export default function Result() {
   const { data: scan, loading, error, reload } = useAsync(() => scansService.get(scanId), [scanId]);
   const [activeFlag, setActiveFlag] = useState(null);
   const image = useMemo(() => scan?.files?.find((f) => f.thumb || f.url), [scan]);
+  const user = useAuthStore((s) => s.user);
+  // Admins reviewing another user's scan go back to the admin scan list.
+  const backTo = isAdmin(user) && scan && scan.userId !== user.id ? '/admin/scans' : '/history';
 
   return (
     <div className="mx-auto max-w-7xl w-full px-4 py-6 sm:py-8 pb-36 md:pb-10">
-      <Link to="/history" className="inline-flex items-center gap-1 text-sm text-subtle hover:text-primary mb-4">
-        <ArrowLeft size={14} aria-hidden /> {t('result.back')}
-      </Link>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <Link to={backTo} className="inline-flex items-center gap-1 text-sm text-subtle hover:text-primary">
+          <ArrowLeft size={14} aria-hidden /> {t('result.back')}
+        </Link>
+        {scan && !loading && <DownloadReportButton scan={scan} size="sm" />}
+      </div>
 
       {loading ? (
         <ResultSkeleton />
@@ -89,6 +99,8 @@ export default function Result() {
           </Card>
 
           <FilesGallery files={scan.files} />
+
+          <VerdictReasons scan={scan} />
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ import { Phone, FileWarning, Share2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import ReportModal from './ReportModal.jsx';
+import DownloadReportButton from './DownloadReportButton.jsx';
 import { scansService } from '../../services/scansService.js';
 import { HELPLINE } from '../../utils/constants.js';
 import { loc } from '../../utils/formatters.js';
@@ -55,6 +56,7 @@ export default function ActionBar({ scan }) {
         <a href={waLink} target="_blank" rel="noreferrer" className="btn btn-secondary btn-lg">
           <Share2 size={18} aria-hidden /> {t('actions.share')}
         </a>
+        <DownloadReportButton scan={scan} size="lg" />
         <div className="ml-auto">{feedbackBtns}</div>
       </div>
 
@@ -70,6 +72,7 @@ export default function ActionBar({ scan }) {
           <a href={waLink} target="_blank" rel="noreferrer" className="btn btn-secondary h-12 px-3" aria-label={t('actions.share')}>
             <Share2 size={18} />
           </a>
+          <DownloadReportButton scan={scan} iconOnly className="h-12 px-3" />
         </div>
         <div className="flex justify-center mt-1">{feedbackBtns}</div>
       </div>

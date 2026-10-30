@@ -1,8 +1,8 @@
 {
-  "name": "jobkavach-frontend",
+  "name": "trustmatrix-frontend",
   "private": true,
   "version": "1.0.0",
-  "description": "JobKavach – AI task-scam and fake job-offer detector (frontend). DAXDEV Team.",
+  "description": "TrustMatrix – AI task-scam and fake job-offer detector (frontend). DAXDEV Team.",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -7,6 +7,7 @@ import Field from '../components/common/Field.jsx';
 import Button from '../components/common/Button.jsx';
 import { useAuthStore } from '../store/authStore.js';
 import { USE_MOCK } from '../api/axios.js';
+import { homeFor, returnPath } from '../utils/roles.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -36,8 +37,8 @@ export default function Login() {
     if (!validate()) return;
     setLoading(true);
     try {
-      await login(form);
-      navigate(location.state?.from?.pathname || '/dashboard', { replace: true });
+      const user = await login(form);
+      navigate(returnPath(location.state?.from, user) || homeFor(user), { replace: true });
     } catch (err) {
       const code = err.response?.data?.message;
       setFormError(t(`auth.errors.${code}`, { defaultValue: t('auth.errors.generic') }));
@@ -74,10 +75,10 @@ export default function Login() {
         <div className="mt-8 card p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-subtle mb-3">{t('auth.demoAccounts')}</p>
           <div className="grid sm:grid-cols-2 gap-2">
-            <Button variant="secondary" size="sm" icon={User} onClick={() => setForm({ email: 'user@jobkavach.in', password: 'User@123' })}>{t('auth.demoUser')}</Button>
-            <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={() => setForm({ email: 'admin@jobkavach.in', password: 'Admin@123' })}>{t('auth.demoAdmin')}</Button>
+            <Button variant="secondary" size="sm" icon={User} onClick={() => setForm({ email: 'user@trustmatrix.in', password: 'User@123' })}>{t('auth.demoUser')}</Button>
+            <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={() => setForm({ email: 'admin@trustmatrix.in', password: 'Admin@123' })}>{t('auth.demoAdmin')}</Button>
           </div>
-          <p className="text-xs text-subtle mt-2 mono">user@jobkavach.in / User@123 · admin@jobkavach.in / Admin@123</p>
+          <p className="text-xs text-subtle mt-2 mono">user@trustmatrix.in / User@123 · admin@trustmatrix.in / Admin@123</p>
         </div>
       )}
     </AuthShell>

@@ -39,6 +39,11 @@ export default function Scan() {
     if (location.state?.files?.length) {
       setFiles(location.state.files);
       navigate(location.pathname, { replace: true, state: null });
+    } else if (location.state?.text) {
+      // Text handed over from the safety chatbot ("Run a full scan").
+      setForm((f) => ({ ...f, text: location.state.text }));
+      setTab('text');
+      navigate(location.pathname, { replace: true, state: null });
     }
   }, [location.state, location.pathname, navigate]);
 

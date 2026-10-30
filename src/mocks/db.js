@@ -6,7 +6,9 @@ import { analyse } from './analyzer.js';
 import { MOCK_ACCOUNTS, MOCK_OTHER_USERS, SAMPLE_TEXTS, ENTITY_SEED, HEADLINE_SEED } from './data.js';
 import { chatThumb, letterThumb, postThumb } from './thumbs.js';
 
-const KEY = 'jk_mock_db_v1';
+// Bump DB_VERSION whenever the seed shape changes; older saved data is then reseeded.
+const KEY = 'tm_mock_db';
+const DB_VERSION = 2;
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
 
@@ -70,15 +72,12 @@ function seed() {
     scans.push(buildScan({ text }, entities, { id: `scn_o${i}`, userId: u.id, createdAt: new Date(Date.now() - (i + 1) * 7 * HOUR).toISOString() }));
   });
 
-  const notifications = [
-    { id: 'n_1', type: 'scan_completed', title: { en: 'Scan finished: Scam found', hi: 'स्कैन पूरा: ठगी मिली', pa: 'ਸਕੈਨ ਪੂਰਾ: ਠੱਗੀ ਮਿਲੀ' }, body: { en: 'Telegram chat with Priya_HR_Amazon is a task scam.', hi: 'Priya_HR_Amazon वाली चैट टास्क ठगी है।', pa: 'Priya_HR_Amazon ਵਾਲੀ ਚੈਟ ਟਾਸਕ ਠੱਗੀ ਹੈ।' }, link: `/result/${scans[0].id}`, read: false, createdAt: new Date(Date.now() - 2 * HOUR).toISOString() },
-    { id: 'n_2', type: 'admin_alert', title: { en: 'New alert: Amazon WFH scam', hi: 'नया अलर्ट: Amazon WFH ठगी', pa: 'ਨਵਾਂ ਅਲਰਟ: Amazon WFH ਠੱਗੀ' }, body: { en: 'Fake Amazon task groups are active in Punjab and Delhi.', hi: 'पंजाब और दिल्ली में नकली Amazon टास्क ग्रुप सक्रिय हैं।', pa: 'ਪੰਜਾਬ ਤੇ ਦਿੱਲੀ ਵਿੱਚ ਨਕਲੀ Amazon ਟਾਸਕ ਗਰੁੱਪ ਸਰਗਰਮ ਹਨ।' }, link: '/threat-map', read: false, createdAt: new Date(Date.now() - 6 * HOUR).toISOString() },
-    { id: 'n_3', type: 'report_status', title: { en: 'Report update', hi: 'रिपोर्ट अपडेट', pa: 'ਰਿਪੋਰਟ ਅਪਡੇਟ' }, body: { en: 'Your cybercrime report for ₹2,500 is under review.', hi: '₹2,500 वाली आपकी साइबर क्राइम रिपोर्ट जाँच में है।', pa: '₹2,500 ਵਾਲੀ ਤੁਹਾਡੀ ਸਾਈਬਰ ਕ੍ਰਾਈਮ ਰਿਪੋਰਟ ਜਾਂਚ ਅਧੀਨ ਹੈ।' }, link: `/result/${scans[1].id}`, read: true, createdAt: new Date(Date.now() - 2 * DAY).toISOString() },
-    { id: 'n_4', type: 'stage_changed', title: { en: 'Live chat moved to a new stage', hi: 'लाइव चैट नए चरण में पहुँची', pa: 'ਲਾਈਵ ਚੈਟ ਨਵੇਂ ਪੜਾਅ \'ਤੇ ਪਹੁੰਚੀ' }, body: { en: 'They are now asking for a prepaid task deposit.', hi: 'अब वे प्रीपेड टास्क के लिए पैसे मांग रहे हैं।', pa: 'ਹੁਣ ਉਹ ਪ੍ਰੀਪੇਡ ਟਾਸਕ ਲਈ ਪੈਸੇ ਮੰਗ ਰਹੇ ਹਨ।' }, link: '/live', read: true, createdAt: new Date(Date.now() - 3 * DAY).toISOString() },
-  ];
+  // No placeholder notifications: they are created only by real events
+  // (scan finished, admin broadcast, live chat stage change).
+  const notifications = [];
 
   return {
-    version: 1,
+    version: DB_VERSION,
     session: null,
     accounts: MOCK_ACCOUNTS.map((a) => ({ ...a })),
     otherUsers: MOCK_OTHER_USERS.map((u) => ({ ...u })),
@@ -87,7 +86,7 @@ function seed() {
     headlines: HEADLINE_SEED.map((h) => ({ ...h })),
     notifications,
     broadcasts: [],
-    live: { connected: true, botUsername: 'JobKavachBot', sessions: [{ id: 'ls_1', chatName: 'Priya_HR (Amazon Tasks)', startedAt: new Date(Date.now() - 40 * 60000).toISOString(), stage: 3, risk: 78 }] },
+    live: { connected: true, botUsername: 'TrustMatrixBot', sessions: [{ id: 'ls_1', chatName: 'Priya_HR (Amazon Tasks)', startedAt: new Date(Date.now() - 40 * 60000).toISOString(), stage: 3, risk: 78 }] },
   };
 }
 
@@ -96,8 +95,11 @@ let db = null;
 export function getDb() {
   if (db) return db;
   try {
+    // Old demo data (previous key / version) used the old brand's login emails.
+    localStorage.removeItem('jk_mock_db_v1');
     const raw = localStorage.getItem(KEY);
-    db = raw ? JSON.parse(raw) : seed();
+    const saved = raw ? JSON.parse(raw) : null;
+    db = saved?.version === DB_VERSION ? saved : seed();
   } catch {
     db = seed();
   }

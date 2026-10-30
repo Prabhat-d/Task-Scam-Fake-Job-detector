@@ -3,7 +3,10 @@
  * same shape the Express API returns, after a small realistic delay.
  */
 import { getDb, saveDb, buildScan } from './db.js';
-import { bus } from './mockSocket.js';
+import { bus } from './bus.js';
+import { pushNotification, isFor, forClient } from './notify.js';
+import { SCAM_NEWS } from '../utils/scamNews.js';
+import { isAdmin } from '../utils/roles.js';
 import { verifyCompany, verifyDomain, analyse } from './analyzer.js';
 import { fileToThumb } from './thumbs.js';
 import { STATE_TILES, STATE_COUNTS, CITIES, SCAM_SCRIPTS, SAMPLE_TEXTS } from './data.js';
@@ -38,7 +41,7 @@ const requireUser = () => {
 };
 const requireAdmin = () => {
   const u = requireUser();
-  if (u.role !== 'admin') throw fail(403, 'Admins only');
+  if (!isAdmin(u)) throw fail(403, 'Admins only');
   return u;
 };
 
@@ -182,18 +185,13 @@ export const scans = {
       delete scan.startedAt;
       saveDb();
       bus.dispatch('scan:completed', { scanId: id, verdict: scan.verdict });
-      const n = {
-        id: `n_${Date.now()}`,
+      pushNotification({
+        userId: scan.userId,
         type: 'scan_completed',
         title: { en: `Scan finished: ${scan.verdict === 'scam' ? 'Scam found' : scan.verdict === 'suspicious' ? 'Be careful' : 'Looks genuine'}`, hi: `स्कैन पूरा: ${scan.verdict === 'scam' ? 'ठगी मिली' : scan.verdict === 'suspicious' ? 'सावधान रहें' : 'असली लगता है'}`, pa: `ਸਕੈਨ ਪੂਰਾ: ${scan.verdict === 'scam' ? 'ਠੱਗੀ ਮਿਲੀ' : scan.verdict === 'suspicious' ? 'ਸਾਵਧਾਨ ਰਹੋ' : 'ਅਸਲ ਲੱਗਦਾ ਹੈ'}` },
         body: { en: scan.title, hi: scan.title, pa: scan.title },
         link: `/result/${id}`,
-        read: false,
-        createdAt: new Date().toISOString(),
-      };
-      db.notifications.unshift(n);
-      saveDb();
-      bus.dispatch('notification:new', n);
+      });
     }, STEP_MS * PROCESSING_STEPS.length + 400);
 
     return { scanId: id };
@@ -210,14 +208,14 @@ export const scans = {
     await wait(400);
     const u = requireUser();
     const s = getDb().scans.find((x) => x.id === id);
-    if (!s || (s.userId !== u.id && u.role !== 'admin')) throw fail(404, 'notFound');
+    if (!s || (s.userId !== u.id && !isAdmin(u))) throw fail(404, 'notFound');
     return s;
   },
 
   async list({ page: p = 1, limit = 12, verdict, type, q, from, to, all, user } = {}) {
     await wait(300);
     const u = requireUser();
-    let items = getDb().scans.filter((s) => (all && u.role === 'admin') || s.userId === u.id);
+    let items = getDb().scans.filter((s) => (all && isAdmin(u)) || s.userId === u.id);
     if (user) items = items.filter((s) => s.userId === user);
     if (verdict) items = items.filter((s) => s.verdict === verdict);
     if (type) items = items.filter((s) => s.type === type);
@@ -300,13 +298,29 @@ export const live = {
 export const notifications = {
   async list() {
     await wait(250);
-    requireUser();
-    return getDb().notifications.slice(0, 50);
+    const u = requireUser();
+    return getDb()
+      .notifications.filter((n) => isFor(n, u))
+      .slice(0, 50)
+      .map((n) => forClient(n, u));
   },
   async readAll() {
     await wait(200);
-    getDb().notifications.forEach((n) => (n.read = true));
+    const u = requireUser();
+    getDb().notifications.forEach((n) => {
+      if (isFor(n, u) && !n.readBy?.includes(u.id)) n.readBy = [...(n.readBy || []), u.id];
+    });
     saveDb();
+    return { ok: true };
+  },
+  async read(id) {
+    await wait(120);
+    const u = requireUser();
+    const n = getDb().notifications.find((x) => x.id === id);
+    if (n && isFor(n, u) && !n.readBy?.includes(u.id)) {
+      n.readBy = [...(n.readBy || []), u.id];
+      saveDb();
+    }
     return { ok: true };
   },
 };
@@ -386,10 +400,8 @@ export const stats = {
       scripts: SCAM_SCRIPTS,
       topEntities,
       hourly,
-      feed: Array.from({ length: 6 }, (_, i) => {
-        const [city, state] = CITIES[(i * 5) % CITIES.length];
-        return { id: `tf_${i}`, script: SCAM_SCRIPTS[i % SCAM_SCRIPTS.length].key, city, state, at: new Date(Date.now() - (i + 1) * 95000).toISOString() };
-      }),
+      // Threat feed = current scam news.
+      feed: SCAM_NEWS.map((n) => ({ ...n, kind: 'news' })),
     };
   },
 };
@@ -536,10 +548,17 @@ export const admin = {
     const db = getDb();
     const item = { id: `b_${Date.now()}`, title, message, audience, state, language, sentBy: a.name, createdAt: new Date().toISOString(), reach: audience === 'all' ? 48210 : 3000 + Math.round(Math.random() * 4000) };
     db.broadcasts.unshift(item);
-    const n = { id: `n_${Date.now()}`, type: 'admin_alert', title: { en: title, hi: title, pa: title }, body: { en: message, hi: message, pa: message }, link: '/dashboard', read: false, createdAt: new Date().toISOString() };
-    db.notifications.unshift(n);
     saveDb();
-    bus.dispatch('notification:new', n);
+    pushNotification({
+      type: 'admin_alert',
+      audience,
+      state,
+      language,
+      senderId: a.id,
+      title: { en: title, hi: title, pa: title },
+      body: { en: message, hi: message, pa: message },
+      link: '/dashboard',
+    });
     return item;
   },
   async broadcasts() {

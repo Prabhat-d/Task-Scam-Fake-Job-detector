@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSocketEvent } from '../../hooks/useSocketEvent.js';
 import { useNotificationStore } from '../../store/notificationStore.js';
 import { useHeadlineStore } from '../../store/headlineStore.js';
+import { useAuthStore } from '../../store/authStore.js';
 import { loc } from '../../utils/formatters.js';
 
 /** App-wide socket listeners: notifications and headline updates. Renders nothing. */
@@ -14,6 +15,10 @@ export default function RealtimeBridge() {
   const setHeadlines = useHeadlineStore((s) => s.setHeadlines);
 
   useSocketEvent('notification:new', (n) => {
+    // Ignore events addressed to someone else and duplicates we already have.
+    const me = useAuthStore.getState().user;
+    if (!n?.id || (n.userId && me && n.userId !== me.id)) return;
+    if (useNotificationStore.getState().items.some((x) => x.id === n.id)) return;
     add(n);
     // Stage changes have their own red toast on the Live page.
     if (n.type === 'stage_changed' && window.location.pathname === '/live') return;

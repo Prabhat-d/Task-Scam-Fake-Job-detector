@@ -38,7 +38,7 @@ export default function Scans() {
       const all = await adminService.scans({ ...filters, page: 1, limit: 10000, user: userFilter || undefined });
       downloadCSV(
         all.items.map((s) => ({ id: s.id, title: s.title, type: s.type, verdict: s.verdict, score: s.score, company: s.companyName, userId: s.userId, createdAt: s.createdAt })),
-        `jobkavach_scans_${new Date().toISOString().slice(0, 10)}.csv`
+        `trustmatrix_scans_${new Date().toISOString().slice(0, 10)}.csv`
       );
     } finally {
       setExporting(false);

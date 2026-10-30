@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
-import { Copy, Download, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { useMemo } from 'react';
+import { Copy, ExternalLink, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import Modal from '../common/Modal.jsx';
 import Button from '../common/Button.jsx';
 import { buildDossierText } from '../../utils/dossier.js';
-import { scansService } from '../../services/scansService.js';
-import { downloadBlob } from '../../utils/formatters.js';
+import DownloadReportButton from './DownloadReportButton.jsx';
 import { useAuthStore } from '../../store/authStore.js';
 import { CYBERCRIME_URL } from '../../utils/constants.js';
 
@@ -14,8 +13,9 @@ import { CYBERCRIME_URL } from '../../utils/constants.js';
 export default function ReportModal({ open, onClose, scan }) {
   const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
-  const [downloading, setDownloading] = useState(false);
-  const text = useMemo(() => (scan ? buildDossierText(scan, user) : ''), [scan, user]);
+  // Leave the complainant out when an admin views someone else's scan.
+  const owner = scan?.userId && user && scan.userId !== user.id ? null : user;
+  const text = useMemo(() => (scan ? buildDossierText(scan, owner) : ''), [scan, owner]);
 
   const copy = async () => {
     try {
@@ -23,18 +23,6 @@ export default function ReportModal({ open, onClose, scan }) {
       toast.success(t('report.copied'));
     } catch {
       toast.error(t('common.copyFailed'));
-    }
-  };
-
-  const download = async () => {
-    setDownloading(true);
-    try {
-      const blob = await scansService.report(scan.id);
-      downloadBlob(blob, `JobKavach_${scan.id}.pdf`);
-    } catch {
-      toast.error(t('report.downloadFailed'));
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -48,7 +36,7 @@ export default function ReportModal({ open, onClose, scan }) {
       footer={
         <>
           <Button variant="secondary" icon={Copy} onClick={copy}>{t('report.copy')}</Button>
-          <Button variant="secondary" icon={Download} onClick={download} loading={downloading}>{t('report.downloadPdf')}</Button>
+          <DownloadReportButton scan={scan} />
           <Button href={CYBERCRIME_URL} target="_blank" rel="noreferrer" iconRight={ExternalLink}>{t('report.openPortal')}</Button>
         </>
       }

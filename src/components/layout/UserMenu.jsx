@@ -4,6 +4,7 @@ import { LogOut, User, History, Settings, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../../store/authStore.js';
 import { useClickOutside } from '../../hooks/useClickOutside.js';
+import { isAdmin } from '../../utils/roles.js';
 
 export const initials = (name = '') => name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
 
@@ -19,6 +20,7 @@ export default function UserMenu() {
   useClickOutside(ref, close, open);
 
   const items = [
+    ...(isAdmin(user) ? [{ to: '/admin', label: t('nav.admin'), icon: ShieldCheck }] : []),
     { to: '/profile', label: t('nav.profile'), icon: User },
     { to: '/history', label: t('nav.history'), icon: History },
     { to: '/profile#settings', label: t('nav.settings'), icon: Settings },
@@ -34,7 +36,7 @@ export default function UserMenu() {
           <div className="px-4 py-3 border-b divider">
             <p className="text-sm font-semibold text-heading truncate">{user?.name}</p>
             <p className="text-xs text-subtle truncate">{user?.email}</p>
-            {user?.role === 'admin' && (
+            {isAdmin(user) && (
               <span className="chip bg-navy text-white mt-2 dark:bg-black/40"><ShieldCheck size={12} aria-hidden /> {t('nav.adminRole')}</span>
             )}
           </div>

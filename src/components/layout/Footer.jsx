@@ -47,7 +47,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="border-t border-ink">
-        <p className="mx-auto max-w-7xl px-4 py-4 text-center text-xs text-slate-400">© 2026 JobKavach · {t('footer.managedBy')} DAXDEV Team</p>
+        <p className="mx-auto max-w-7xl px-4 py-4 text-center text-xs text-slate-400">© 2026 TrustMatrix · {t('footer.managedBy')} DAXDEV Team</p>
       </div>
     </footer>
   );

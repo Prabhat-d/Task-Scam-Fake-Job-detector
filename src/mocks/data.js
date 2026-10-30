@@ -2,12 +2,13 @@
  * Realistic Indian sample data for mock mode (demo without backend).
  * All names, UPI IDs, phone numbers and CINs here are SAMPLE DATA for the demo.
  */
+import { SCAM_NEWS } from '../utils/scamNews.js';
 
 export const MOCK_ACCOUNTS = [
   {
     id: 'u_1001',
     name: 'Simran Kaur',
-    email: 'user@jobkavach.in',
+    email: 'user@trustmatrix.in',
     password: 'User@123',
     phone: '+91 98140 22331',
     role: 'user',
@@ -22,7 +23,7 @@ export const MOCK_ACCOUNTS = [
   {
     id: 'a_0001',
     name: 'Daksh Verma',
-    email: 'admin@jobkavach.in',
+    email: 'admin@trustmatrix.in',
     password: 'Admin@123',
     phone: '+91 99880 11223',
     role: 'admin',
@@ -144,41 +145,18 @@ export const ENTITY_SEED = [
 /* Headlines                                                            */
 /* ------------------------------------------------------------------ */
 
-export const HEADLINE_SEED = [
-  {
-    id: 'h_1',
-    title: 'Alert',
-    message: "Fake 'Amazon work-from-home' task scam spreading on Telegram. Never pay to get a job.",
-    severity: 'critical',
-    link: 'https://cybercrime.gov.in',
-    active: true,
-    startDate: new Date(Date.now() - 2 * 86400000).toISOString(),
-    endDate: new Date(Date.now() + 10 * 86400000).toISOString(),
-    createdBy: 'Daksh Verma',
-  },
-  {
-    id: 'h_2',
-    title: 'Warning',
-    message: 'Offer letters asking for "laptop deposit" or "ID card fee" are fake. Real companies never charge you.',
-    severity: 'warning',
-    link: '',
-    active: true,
-    startDate: new Date(Date.now() - 86400000).toISOString(),
-    endDate: new Date(Date.now() + 20 * 86400000).toISOString(),
-    createdBy: 'Daksh Verma',
-  },
-  {
-    id: 'h_3',
-    title: 'Tip',
-    message: 'Lost money to a job scam? Call 1930 within the first hour – your money can often be frozen.',
-    severity: 'info',
-    link: 'https://cybercrime.gov.in',
-    active: false,
-    startDate: new Date(Date.now() - 5 * 86400000).toISOString(),
-    endDate: new Date(Date.now() + 30 * 86400000).toISOString(),
-    createdBy: 'Daksh Verma',
-  },
-];
+/** Ticker headlines = the current scam news (see utils/scamNews.js). */
+export const HEADLINE_SEED = SCAM_NEWS.map((n, i) => ({
+  id: `h_${n.id}`,
+  title: `${n.label} (${n.date})`,
+  message: n.message,
+  severity: n.severity,
+  link: n.link,
+  active: true,
+  startDate: new Date(Date.now() - (i + 1) * 86400000).toISOString(),
+  endDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+  createdBy: 'Daksh Verma',
+}));
 
 /* ------------------------------------------------------------------ */
 /* Live Telegram chat script (arrives one message at a time)           */

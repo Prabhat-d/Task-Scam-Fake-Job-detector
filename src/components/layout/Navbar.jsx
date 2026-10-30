@@ -9,6 +9,7 @@ import ThemeToggle from './ThemeToggle.jsx';
 import NotificationBell from './NotificationBell.jsx';
 import UserMenu from './UserMenu.jsx';
 import { HELPLINE } from '../../utils/constants.js';
+import { isAdmin } from '../../utils/roles.js';
 
 /** Sticky white navbar with centre links, language/theme/bell/avatar on the right, hamburger on mobile. */
 export default function Navbar() {
@@ -26,7 +27,7 @@ export default function Navbar() {
         { to: '/live', label: t('nav.live'), icon: Radio },
         { to: '/history', label: t('nav.history'), icon: History },
         { to: '/threat-map', label: t('nav.threatMap'), icon: Map },
-        ...(user.role === 'admin' ? [{ to: '/admin', label: t('nav.admin'), icon: ShieldCheck }] : []),
+        ...(isAdmin(user) ? [{ to: '/admin', label: t('nav.admin'), icon: ShieldCheck }] : []),
       ]
     : [];
 

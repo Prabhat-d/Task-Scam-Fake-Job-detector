@@ -55,7 +55,7 @@ export default function Evaluate() {
       <PageHeader
         title={t('admin.evaluate.title')}
         description={t('admin.evaluate.subtitle')}
-        actions={<Button variant="secondary" size="sm" icon={FileSpreadsheet} onClick={() => downloadBlob(new Blob([SAMPLE_CSV], { type: 'text/csv' }), 'jobkavach_sample.csv')}>{t('admin.evaluate.sampleCsv')}</Button>}
+        actions={<Button variant="secondary" size="sm" icon={FileSpreadsheet} onClick={() => downloadBlob(new Blob([SAMPLE_CSV], { type: 'text/csv' }), 'trustmatrix_sample.csv')}>{t('admin.evaluate.sampleCsv')}</Button>}
       />
 
       <Card title={t('admin.evaluate.upload')} icon={UploadCloud} className="mb-6">
@@ -125,7 +125,7 @@ export default function Evaluate() {
               className="xl:col-span-2"
               title={t('admin.evaluate.results')}
               bodyClassName="p-0"
-              actions={<Button size="sm" variant="secondary" icon={Download} onClick={() => downloadCSV(result.results, `jobkavach_evaluation_${Date.now()}.csv`)}>{t('admin.evaluate.export')}</Button>}
+              actions={<Button size="sm" variant="secondary" icon={Download} onClick={() => downloadCSV(result.results, `trustmatrix_evaluation_${Date.now()}.csv`)}>{t('admin.evaluate.export')}</Button>}
             >
               <div className="overflow-x-auto">
                 <table className="table">

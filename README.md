@@ -1,5 +1,5 @@
 <<<<<<< HEAD
-# JobKavach – Frontend
+# TrustMatrix – Frontend
 
 AI task-scam and fake job-offer detector · Problem **CTBF-AI-11** · Consumer Protection and Public Safety
 Managed by **DAXDEV Team**.
@@ -28,8 +28,8 @@ Set `VITE_USE_MOCK=false` to talk to the Express backend.
 
 | Role  | Email               | Password  |
 |-------|---------------------|-----------|
-| User  | user@jobkavach.in   | User@123  |
-| Admin | admin@jobkavach.in  | Admin@123 |
+| User  | user@trustmatrix.in   | User@123  |
+| Admin | admin@trustmatrix.in  | Admin@123 |
 
 The login page also has one-click "Fill user / Fill admin" buttons in mock mode.
 

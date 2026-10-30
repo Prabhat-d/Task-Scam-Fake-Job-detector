@@ -587,17 +587,95 @@ app.get('/api/stats/threats', async (req, res) => {
   }
 });
 
+// 10. Live Telegram Monitor Sessions
+app.get('/api/live/sessions', (req, res) => {
+  res.json({
+    connected: true,
+    botUsername: 'CyberShieldLiveBot',
+    deepLink: 'https://t.me/CyberShieldLiveBot?start=u_1001',
+    sessions: [
+      {
+        id: 'ls_1',
+        chatName: 'Priya_HR (Amazon Tasks VIP)',
+        startedAt: new Date(Date.now() - 40 * 60000).toISOString(),
+        stage: 3,
+        risk: 78
+      },
+      {
+        id: 'ls_2',
+        chatName: 'Global Merchant Order Dispatch',
+        startedAt: new Date(Date.now() - 15 * 60000).toISOString(),
+        stage: 2,
+        risk: 65
+      }
+    ]
+  });
+});
+
+app.post('/api/live/connect-telegram', (req, res) => {
+  res.json({
+    connected: true,
+    botUsername: 'CyberShieldLiveBot',
+    deepLink: 'https://t.me/CyberShieldLiveBot?start=u_1001',
+    connectedAt: new Date().toISOString()
+  });
+});
+
+// 11. Active Scam Headlines & Live Alerts (Matches Dashboard.jsx and Top Ticker)
+const ACTIVE_HEADLINES_DATA = [
+  {
+    id: 'h_1',
+    title: 'Fake Russian Embassy Recruitment Scam (Oct 2026)',
+    message: 'Delhi Police arrested operators running fake embassy portals to collect illegal registration fees.',
+    severity: 'critical',
+    link: 'https://cybercrime.gov.in',
+    active: true,
+    startDate: new Date(Date.now() - 2 * 3600000).toISOString(),
+    endDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+    createdBy: 'Cyber Crime Unit'
+  },
+  {
+    id: 'h_2',
+    title: 'Task-Based Online Rating Fraud (Oct 2026)',
+    message: 'Hyderabad Cyber Cell warns of ₹37L loss in remote rating jobs where scammers froze funds after small returns.',
+    severity: 'critical',
+    link: 'https://cybercrime.gov.in',
+    active: true,
+    startDate: new Date(Date.now() - 5 * 3600000).toISOString(),
+    endDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+    createdBy: 'Helpline 1930'
+  },
+  {
+    id: 'h_3',
+    title: 'Fake IT HR Recruiters on WhatsApp (Oct 2026)',
+    message: 'Advisory: Scammers posing as HR from top tech firms demand payment for laptop security or training kits.',
+    severity: 'warning',
+    link: 'https://cybercrime.gov.in',
+    active: true,
+    startDate: new Date(Date.now() - 24 * 3600000).toISOString(),
+    endDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+    createdBy: 'National Cyber Agency'
+  }
+];
+
 app.get('/api/headlines/active', (req, res) => {
-  res.json([
-    { id: 'h1', title: 'Advisory: New wave of Telegram part-time job scams targeting college students.', severity: 'critical', date: '2026-10-30' },
-    { id: 'h2', title: 'Helpline 1930 reports 40% faster recovery within the 2-hour Golden Hour.', severity: 'info', date: '2026-10-29' }
-  ]);
+  res.json(ACTIVE_HEADLINES_DATA);
+});
+
+app.get('/api/admin/headlines', (req, res) => {
+  res.json(ACTIVE_HEADLINES_DATA);
 });
 
 app.get('/api/notifications', (req, res) => {
   res.json({
     items: [
-      { id: 'n1', title: 'Threat Radar Updated', message: 'New malicious UPI handles added to database.', time: '10m ago' }
+      {
+        id: 'n1',
+        type: 'admin_alert',
+        title: 'New High-Risk Threat Detected',
+        body: 'Multiple complaints filed against UPI ID earnfast92@okaxis.',
+        createdAt: new Date(Date.now() - 15 * 60000).toISOString()
+      }
     ]
   });
 });

@@ -1,6 +1,7 @@
 import i18n from '../i18n/index.js';
 import { formatDateTime, downloadBlob } from './formatters.js';
 import { buildReasons } from './reasons.js';
+import { buildReportPdf, scamIdFor, contentTypeFor, scamPatternFor } from './reportPdf.js';
 import { TASK_STAGES, JOB_STAGES, HELPLINE, CYBERCRIME_URL } from './constants.js';
 
 /**
@@ -11,17 +12,6 @@ import { TASK_STAGES, JOB_STAGES, HELPLINE, CYBERCRIME_URL } from './constants.j
  */
 
 const en = () => i18n.getFixedT('en');
-
-/** Make text safe for jsPDF's Latin fonts: ₹ → INR, smart quotes → ASCII, other scripts → […]. */
-export const pdfSafe = (s) =>
-  String(s ?? '')
-    .replace(/₹\s?/g, 'INR ')
-    .replace(/[–—]/g, '-')
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/…/g, '...')
-    .replace(/[^\x20-\x7E\n]+/g, (m) => (m.trim().length > 2 ? ' [...] ' : ''))
-    .replace(/[ \t]+\n/g, '\n');
 
 const stageName = (scan) => {
   if (scan.stage == null || scan.stage < 0) return 'Not applicable';
@@ -51,13 +41,14 @@ export function buildReportSections(scan, user) {
   sections.push({
     title: 'Scan verdict',
     rows: [
+      ['Scam ID', scamIdFor(scan)],
       ['Verdict', t(`verdict.${scan.verdict}`)],
       ['Risk score', `${scan.score} / 100`],
       ['Summary', scan.summary?.en || ''],
-      ['Content type', t(`types.${scan.type}`, { defaultValue: scan.type || '-' })],
-      ['Scam pattern', scan.verdict === 'genuine' ? 'None detected' : t(`result.track.${scan.track}`)],
+      ['Content type', contentTypeFor(scan)],
+      ['Scam pattern', scamPatternFor(scan)],
       ['Scam stage reached', stageName(scan)],
-      ['Scan ID', scan.id],
+      ['Reference', scan.id],
       ['Scanned on', formatDateTime(scan.createdAt, 'en')],
     ],
   });
@@ -199,171 +190,11 @@ export function buildDossierText(scan, user) {
   return lines.join('\n');
 }
 
-/** Builds the full report as a PDF Blob (jsPDF is loaded on demand to keep the bundle small). */
-export async function buildDossierPdf(scan, user) {
-  const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const W = doc.internal.pageSize.getWidth();
-  const H = doc.internal.pageSize.getHeight();
-  const M = 44;
-  const CW = W - M * 2;
-  const LABEL_W = 150;
-  let y = M;
-
-  const ensure = (h) => {
-    if (y + h > H - M - 16) {
-      doc.addPage();
-      y = M;
-    }
-  };
-  const write = (text, x, width, { size = 9.5, bold = false, color = [51, 65, 85], font = 'helvetica', lh = 12.5 } = {}) => {
-    doc.setFont(font, bold ? 'bold' : 'normal');
-    doc.setFontSize(size);
-    doc.setTextColor(...color);
-    const lines = doc.splitTextToSize(pdfSafe(text), width);
-    lines.forEach((line) => {
-      ensure(lh);
-      doc.text(line, x, y + size);
-      y += lh;
-    });
-    return lines.length;
-  };
-
-  // Header band
-  const verdictColor = { scam: [239, 68, 68], suspicious: [245, 158, 11], genuine: [16, 185, 129] }[scan.verdict] || [59, 130, 246];
-  doc.setFillColor(15, 23, 42);
-  doc.rect(0, 0, W, 64, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.setTextColor(255, 255, 255);
-  doc.text('TrustMatrix', M, 32);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(203, 213, 225);
-  doc.text('Scam Analysis & Incident Report', M, 48);
-  doc.text(pdfSafe(`Scan ${scan.id}`), W - M, 32, { align: 'right' });
-  doc.text(pdfSafe(formatDateTime(new Date(), 'en')), W - M, 48, { align: 'right' });
-  y = 84;
-
-  // Verdict box with risk bar
-  const t = en();
-  doc.setDrawColor(...verdictColor);
-  doc.setLineWidth(1.2);
-  doc.roundedRect(M, y, CW, 70, 6, 6, 'S');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
-  doc.setTextColor(...verdictColor);
-  doc.text(pdfSafe(t(`verdict.${scan.verdict}`).toUpperCase()), M + 16, y + 30);
-  doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`Risk score: ${scan.score}/100`, W - M - 16, y + 30, { align: 'right' });
-  doc.setFillColor(226, 232, 240);
-  doc.roundedRect(M + 16, y + 44, CW - 32, 8, 4, 4, 'F');
-  doc.setFillColor(...verdictColor);
-  doc.roundedRect(M + 16, y + 44, Math.max(8, ((CW - 32) * scan.score) / 100), 8, 4, 4, 'F');
-  y += 86;
-
-  buildReportSections(scan, user).forEach((s) => {
-    ensure(40);
-    y += 6;
-    doc.setFillColor(241, 245, 249);
-    doc.rect(M, y, CW, 20, 'F');
-    doc.setFillColor(59, 130, 246);
-    doc.rect(M, y, 3, 20, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text(pdfSafe(s.title), M + 10, y + 14);
-    y += 28;
-
-    s.rows?.forEach(([k, v]) => {
-      // Label is drawn once at the top; the value may flow onto the next page.
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9.5);
-      const label = doc.splitTextToSize(pdfSafe(k), LABEL_W - 8);
-      ensure(label.length * 12.5);
-      const top = y;
-      const page = doc.getNumberOfPages();
-      doc.setTextColor(100, 116, 139);
-      label.forEach((line, i) => doc.text(line, M + 4, top + 9.5 + i * 12.5));
-      write(String(v ?? '-'), M + LABEL_W, CW - LABEL_W);
-      if (doc.getNumberOfPages() === page) y = Math.max(y, top + label.length * 12.5);
-      y += 3;
-    });
-
-    if (s.table) {
-      const cols = [110, CW - 110 - 120, 120];
-      const row = (cells, bold) => {
-        const heights = cells.map((c, i) => doc.splitTextToSize(pdfSafe(c), cols[i] - 8).length);
-        const h = Math.max(...heights) * 12.5 + 6;
-        ensure(h);
-        let x = M;
-        if (bold) {
-          doc.setFillColor(248, 250, 252);
-          doc.rect(M, y, CW, h, 'F');
-        }
-        cells.forEach((c, i) => {
-          doc.setFont(i === 1 && !bold ? 'courier' : 'helvetica', bold ? 'bold' : 'normal');
-          doc.setFontSize(9.5);
-          doc.setTextColor(...(i === 2 && /^Yes/.test(c) ? [220, 38, 38] : [51, 65, 85]));
-          doc.text(doc.splitTextToSize(pdfSafe(c), cols[i] - 8), x + 4, y + 13);
-          x += cols[i];
-        });
-        y += h;
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.5);
-        doc.line(M, y, M + CW, y);
-      };
-      if (!s.table.rows.length) write(s.table.empty, M + 4, CW - 8, { color: [100, 116, 139] });
-      else {
-        row(s.table.head, true);
-        s.table.rows.forEach((r) => row(r, false));
-      }
-      y += 4;
-    }
-
-    if (s.items) {
-      if (!s.items.length && s.empty) write(s.empty, M + 4, CW - 8, { color: [100, 116, 139] });
-      s.items.forEach((it) => {
-        ensure(26);
-        const markColor = it.mark === '[x]' ? [220, 38, 38] : it.mark === '[+]' ? [5, 150, 105] : [100, 116, 139];
-        const startY = y;
-        write(it.mark, M + 4, 22, { bold: true, color: markColor });
-        y = startY;
-        write(it.title, M + 28, CW - 32, { bold: true, color: [15, 23, 42] });
-        if (it.detail) write(it.detail, M + 28, CW - 32);
-        if (it.evidence) write(`Evidence: "${it.evidence}"`, M + 28, CW - 32, { font: 'courier', size: 9, color: [180, 83, 9] });
-        y += 4;
-      });
-    }
-
-    if (s.text) {
-      write(s.text, M + 4, CW - 8, s.mono ? { font: 'courier', size: 9, lh: 11.5, color: [30, 41, 59] } : {});
-    }
-    y += 4;
-  });
-
-  ensure(40);
-  y += 8;
-  write(t('report.footer'), M, CW, { size: 9, color: [100, 116, 139] });
-
-  // Page footers
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i += 1) {
-    doc.setPage(i);
-    doc.setDrawColor(226, 232, 240);
-    doc.line(M, H - 30, W - M, H - 30);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`TrustMatrix incident report - Scan ${pdfSafe(scan.id)} - Helpline ${HELPLINE}`, M, H - 18);
-    doc.text(`Page ${i} of ${pages}`, W - M, H - 18, { align: 'right' });
-  }
-  return doc.output('blob');
-}
+/** Structured PDF report (see reportPdf.js). `complainant` is the reporting user's name. */
+export const buildDossierPdf = (scan, complainant) => buildReportPdf(scan, complainant);
 
 /** Build the PDF in the browser from the scan on screen and save it. */
-export async function downloadScanReport(scan, user) {
-  const blob = await buildDossierPdf(scan, user);
-  downloadBlob(blob, `TrustMatrix_Report_${scan.id}.pdf`);
+export async function downloadScanReport(scan, complainant) {
+  const blob = await buildDossierPdf(scan, complainant);
+  downloadBlob(blob, `TrustMatrix_${scamIdFor(scan)}.pdf`);
 }

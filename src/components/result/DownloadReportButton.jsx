@@ -7,7 +7,7 @@ import { downloadScanReport } from '../../utils/dossier.js';
 import { useAuthStore } from '../../store/authStore.js';
 
 /**
- * Builds the full PDF report (verdict, score, company, entities, full text, reasons, 1930 dossier)
+ * Builds the PDF report (incident details, contacts, company, summary, reasons)
  * in the browser from the scan on screen and downloads it.
  */
 export default function DownloadReportButton({ scan, iconOnly = false, className = '', ...rest }) {
@@ -18,8 +18,9 @@ export default function DownloadReportButton({ scan, iconOnly = false, className
   const download = async () => {
     setBusy(true);
     try {
-      // When an admin opens someone else's scan, the complainant section is left out.
-      await downloadScanReport(scan, scan.userId && user && scan.userId !== user.id ? null : user);
+      // The complainant is the scan owner; an admin downloading someone else's scan gets the account ID.
+      const owner = !scan.userId || scan.userId === user?.id;
+      await downloadScanReport(scan, owner ? user?.name : `Account ${scan.userId}`);
       toast.success(t('report.downloaded'));
     } catch (e) {
       console.error(e);

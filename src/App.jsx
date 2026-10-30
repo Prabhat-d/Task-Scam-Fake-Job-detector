@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import AppRoutes from './routes/AppRoutes.jsx';
+import { HelplineFallback } from './components/common/CallHelplineButton.jsx';
 import { useAuthStore } from './store/authStore.js';
 import { useThemeStore } from './store/themeStore.js';
 import { setUnauthorizedHandler } from './api/axios.js';
@@ -31,6 +32,7 @@ export default function App() {
   return (
     <>
       <AppRoutes />
+      <HelplineFallback />
       <Toaster
         position="top-right"
         toastOptions={{

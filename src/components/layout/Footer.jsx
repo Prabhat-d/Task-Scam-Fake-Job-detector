@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { Phone, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import CallHelplineButton from '../common/CallHelplineButton.jsx';
 import Logo from './Logo.jsx';
-import { HELPLINE, CYBERCRIME_URL } from '../../utils/constants.js';
+import { CYBERCRIME_URL } from '../../utils/constants.js';
 
 /** Dark footer: About, Quick links, Safety tips, Emergency. */
 export default function Footer() {
@@ -37,9 +38,7 @@ export default function Footer() {
         </div>
         <div>
           <h3 className="text-sm font-semibold text-white mb-3">{t('footer.emergency')}</h3>
-          <a href={`tel:${HELPLINE}`} className="btn btn-danger w-full sm:w-auto">
-            <Phone size={16} aria-hidden /> {t('actions.call1930')}
-          </a>
+          <CallHelplineButton className="w-full sm:w-auto" />
           <a href={CYBERCRIME_URL} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-1.5 text-sm text-slate-300 hover:text-white">
             cybercrime.gov.in <ExternalLink size={14} aria-hidden />
           </a>

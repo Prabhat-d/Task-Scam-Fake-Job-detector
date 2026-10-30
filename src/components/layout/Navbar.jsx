@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
-import { Menu, X, Phone, LayoutDashboard, ScanSearch, Radio, History, Map, ShieldCheck } from 'lucide-react';
+import { Menu, X, LayoutDashboard, ScanSearch, Radio, History, Map, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import CallHelplineButton from '../common/CallHelplineButton.jsx';
 import { useAuthStore } from '../../store/authStore.js';
 import Logo from './Logo.jsx';
 import LanguageSwitcher from './LanguageSwitcher.jsx';
 import ThemeToggle from './ThemeToggle.jsx';
 import NotificationBell from './NotificationBell.jsx';
 import UserMenu from './UserMenu.jsx';
-import { HELPLINE } from '../../utils/constants.js';
 import { isAdmin } from '../../utils/roles.js';
 
 /** Sticky white navbar with centre links, language/theme/bell/avatar on the right, hamburger on mobile. */
@@ -50,9 +50,7 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-1 sm:gap-2 ml-auto lg:ml-0">
-          <a href={`tel:${HELPLINE}`} className="hidden xl:inline-flex btn btn-danger btn-sm mr-1" aria-label={t('actions.call1930Aria')}>
-            <Phone size={14} aria-hidden /> {HELPLINE}
-          </a>
+          <CallHelplineButton size="sm" compact className="hidden xl:inline-flex mr-1" />
           <div className="hidden sm:block"><LanguageSwitcher /></div>
           <ThemeToggle className="hidden sm:inline-flex" />
           {user ? (
@@ -75,9 +73,7 @@ export default function Navbar() {
       {open && (
         <div id="mobile-menu" className="lg:hidden border-t divider bg-white dark:bg-slatenavy animate-slideIn">
           <div className="mx-auto max-w-7xl px-4 py-4 space-y-4">
-            <a href={`tel:${HELPLINE}`} className="btn btn-danger w-full">
-              <Phone size={16} aria-hidden /> {t('actions.call1930')}
-            </a>
+            <CallHelplineButton className="w-full" />
             {links.length > 0 && (
               <ul className="grid grid-cols-2 gap-2">
                 {links.map(({ to, label, icon: Icon }) => (

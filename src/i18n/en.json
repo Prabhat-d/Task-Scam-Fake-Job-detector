@@ -77,6 +77,7 @@
   "actions": {
     "call1930": "Call 1930",
     "call1930Aria": "Call the national cyber fraud helpline 1930",
+    "callFallback": {"title": "Call 1930 from your phone", "text": "This device could not start a phone call. Use any of the options below to reach the National Cyber Crime Helpline.", "helpline": "National Cyber Crime Helpline", "dialManually": "Dial 1930 from any mobile phone. Free, 24×7.", "scan": "Scan to dial on your phone", "qrAria": "QR code that dials 1930 on a phone", "copy": "Copy number", "copied": "1930 copied", "portal": "Report online"},
     "report": "Report on cybercrime.gov.in",
     "reportShort": "Report",
     "share": "Share with family",

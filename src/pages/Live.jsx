@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import CallHelplineButton from '../components/common/CallHelplineButton.jsx';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Link2, Copy, Radio, RotateCcw, Phone, FileWarning, ShieldAlert, Bot, BellRing, MessagesSquare } from 'lucide-react';
+import { Send, Link2, Copy, Radio, RotateCcw, FileWarning, ShieldAlert, Bot, BellRing, MessagesSquare } from 'lucide-react';
 import Card from '../components/common/Card.jsx';
 import Button from '../components/common/Button.jsx';
 import Badge from '../components/common/Badge.jsx';
@@ -17,7 +18,7 @@ import { useSocketEvent } from '../hooks/useSocketEvent.js';
 import { liveService } from '../services/liveService.js';
 import { getSocket } from '../socket/socket.js';
 import { USE_MOCK } from '../api/axios.js';
-import { HELPLINE, CYBERCRIME_URL, TASK_STAGES } from '../utils/constants.js';
+import { CYBERCRIME_URL, TASK_STAGES } from '../utils/constants.js';
 import { playAlertSound, ensureNotificationPermission, showBrowserNotification } from '../utils/alerts.js';
 
 /** Pulsing teal "Live" pill. */
@@ -164,7 +165,7 @@ export default function Live() {
             </div>
           </Card>
           <div className="grid grid-cols-2 gap-2">
-            <a href={`tel:${HELPLINE}`} className="btn btn-danger btn-lg col-span-2"><Phone size={18} aria-hidden /> {t('actions.call1930')}</a>
+            <CallHelplineButton size="lg" className="col-span-2" />
             <a href={CYBERCRIME_URL} target="_blank" rel="noreferrer" className="btn btn-secondary"><FileWarning size={16} aria-hidden /> {t('actions.reportShort')}</a>
             <Button variant="secondary" to="/scan" icon={ShieldAlert}>{t('live.scanFull')}</Button>
           </div>

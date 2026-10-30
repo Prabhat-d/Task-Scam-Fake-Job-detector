@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Bot, X, Send, Trash2, Phone, ExternalLink, ScanSearch, Map, Loader2, ShieldAlert } from 'lucide-react';
 import VerdictChip from '../common/VerdictChip.jsx';
+import { watchForDialer } from '../common/CallHelplineButton.jsx';
 import { useChatStore } from '../../store/chatStore.js';
 import { useAuthStore } from '../../store/authStore.js';
 import { looksLikeOffer, quickCheck } from '../../chat/assistant.js';
@@ -63,7 +64,7 @@ function Actions({ actions = [], source, onDone }) {
   return (
     <div className="flex flex-wrap gap-1.5 mt-2">
       {actions.includes('call') && (
-        <a href={`tel:${HELPLINE}`} className={`${cls} !border-danger/40 text-danger`}>
+        <a href={`tel:${HELPLINE}`} onClick={watchForDialer} className={`${cls} !border-danger/40 text-danger`}>
           <Phone size={12} aria-hidden /> {t('chat.actions.call', { n: HELPLINE })}
         </a>
       )}

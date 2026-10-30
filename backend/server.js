@@ -1,10 +1,12 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 require('dotenv').config(); // Fallback to cwd
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const multer = require('multer');
+const { Server } = require('socket.io');
 
 const ThreatScan = require('./models/ThreatScan');
 const { analyzeThreat } = require('./services/aiEngine');
@@ -12,7 +14,15 @@ const { handleChat } = require('./services/chatEngine');
 const { verifyCompanyAgainstMCA, performLiveDnsLookup } = require('./services/mcaVerifier');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
+
+const io = new Server(server, {
+  cors: {
+    origin: true,
+    credentials: true
+  }
+});
 
 // Enable credentials and dynamic origin matching for Axios frontend compatibility
 app.use(cors({
@@ -877,7 +887,82 @@ app.get('/api/admin/broadcast', (req, res) => {
   res.json(adminBroadcasts);
 });
 
-app.listen(PORT, () => {
+// 13. Real-Time Telegram Scam Streaming Engine (Powers /live and Dashboard Monitor)
+const LIVE_TELEGRAM_SCRIPT = [
+  { from: 'Priya_HR', text: 'Hi dear 😊 I am Priya from Amazon Marketing Team. Want to earn ₹3000–8000 daily from home?', level: 'normal', risk: 18, stage: 0 },
+  { from: 'You', text: 'What is the work?', level: 'normal', risk: 18, stage: 0, self: true },
+  { from: 'Priya_HR', text: 'Simple! Like YouTube videos and send screenshot. ₹50 per like.', level: 'suspicious', risk: 32, stage: 0 },
+  { from: 'Priya_HR', text: 'Great job! ₹150 sent to your UPI as trial payment ✅', level: 'suspicious', risk: 45, stage: 1 },
+  { from: 'Priya_HR', text: 'Join our VIP group for more tasks: t.me/AmzTaskVIP_202', level: 'suspicious', risk: 58, stage: 2 },
+  { from: 'Receptionist_Kavya', text: 'Welcome to VIP. Merchant task: pay ₹1,000 and get ₹1,300 back. UPI: amzrewards.pay@ybl', level: 'dangerous', risk: 78, stage: 3 },
+  { from: 'You', text: 'I paid 1000. When will I get it back?', level: 'normal', risk: 78, stage: 3, self: true },
+  { from: 'Receptionist_Kavya', text: 'Wrong operation! Pay ₹8,500 to unfreeze account and complete combo task.', level: 'dangerous', risk: 90, stage: 4 },
+  { from: 'Receptionist_Kavya', text: 'To withdraw ₹24,600 you must pay 18% income tax ₹4,428 first. Only 30 mins left!', level: 'dangerous', risk: 97, stage: 5 },
+];
+
+io.on('connection', (socket) => {
+  console.log(`🔌 [Socket.io] Client connected: ${socket.id}`);
+  let liveTimer = null;
+  let liveIndex = 0;
+  let lastStage = -1;
+
+  socket.on('live:start', () => {
+    console.log(`▶️ [Live Monitor] Stream started for socket ${socket.id}`);
+    if (liveTimer) clearTimeout(liveTimer);
+    liveIndex = 0;
+    lastStage = -1;
+
+    const tick = () => {
+      if (liveIndex >= LIVE_TELEGRAM_SCRIPT.length) {
+        console.log(`⏹️ [Live Monitor] Stream completed for ${socket.id}`);
+        return;
+      }
+      const m = LIVE_TELEGRAM_SCRIPT[liveIndex];
+      const msg = {
+        id: `lm_${Date.now()}_${liveIndex}`,
+        ...m,
+        at: new Date().toISOString()
+      };
+
+      socket.emit('live:message', msg);
+
+      if (m.stage > lastStage) {
+        if (lastStage >= 0) {
+          socket.emit('live:stage_changed', {
+            stage: m.stage,
+            previous: lastStage,
+            track: 'task',
+            risk: m.risk
+          });
+        }
+        lastStage = m.stage;
+      }
+
+      liveIndex += 1;
+      liveTimer = setTimeout(tick, 3000);
+    };
+
+    liveTimer = setTimeout(tick, 800);
+  });
+
+  socket.on('live:stop', () => {
+    console.log(`⏹️ [Live Monitor] Stream stopped for socket ${socket.id}`);
+    if (liveTimer) {
+      clearTimeout(liveTimer);
+      liveTimer = null;
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`❌ [Socket.io] Client disconnected: ${socket.id}`);
+    if (liveTimer) {
+      clearTimeout(liveTimer);
+      liveTimer = null;
+    }
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`🚀 [CyberShield AI] Backend running on http://localhost:${PORT}`);
   console.log(`📡 Endpoints:`);

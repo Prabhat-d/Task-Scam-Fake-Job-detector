@@ -477,6 +477,76 @@ app.post('/api/scans/:id/feedback', (req, res) => {
   res.json({ success: true, id: req.params.id, feedback: req.body.value });
 });
 
+const STATE_TILES_DATA = [
+  ['JK', 'Jammu & Kashmir', 3, 0], ['PB', 'Punjab', 2, 1], ['HP', 'Himachal Pradesh', 3, 1],
+  ['RJ', 'Rajasthan', 1, 2], ['HR', 'Haryana', 2, 2], ['DL', 'Delhi', 3, 2], ['UK', 'Uttarakhand', 4, 2], ['SK', 'Sikkim', 6, 2], ['AR', 'Arunachal Pradesh', 8, 2],
+  ['GJ', 'Gujarat', 0, 3], ['MP', 'Madhya Pradesh', 2, 3], ['UP', 'Uttar Pradesh', 3, 3], ['BR', 'Bihar', 4, 3], ['WB', 'West Bengal', 5, 3], ['AS', 'Assam', 7, 3], ['NL', 'Nagaland', 8, 3],
+  ['MH', 'Maharashtra', 1, 4], ['CG', 'Chhattisgarh', 3, 4], ['JH', 'Jharkhand', 4, 4], ['ML', 'Meghalaya', 6, 4], ['TR', 'Tripura', 7, 4], ['MN', 'Manipur', 8, 4],
+  ['GA', 'Goa', 0, 5], ['TS', 'Telangana', 2, 5], ['OD', 'Odisha', 4, 5], ['MZ', 'Mizoram', 7, 5],
+  ['KA', 'Karnataka', 1, 6], ['AP', 'Andhra Pradesh', 2, 6],
+  ['KL', 'Kerala', 1, 7], ['TN', 'Tamil Nadu', 2, 7],
+].map(([code, name, x, y]) => ({ code, name, x, y }));
+
+const STATE_COUNTS_DATA = {
+  UP: 412, MH: 388, DL: 341, KA: 297, TS: 264, WB: 221, RJ: 198, GJ: 187, TN: 176, HR: 169, PB: 152,
+  BR: 149, MP: 131, AP: 118, KL: 96, OD: 74, JH: 63, CG: 41, AS: 38, UK: 33, HP: 21, JK: 19, GA: 14,
+  TR: 7, ML: 6, MN: 5, NL: 4, AR: 3, MZ: 3, SK: 2,
+};
+
+const CITIES_DATA = [
+  ['Noida', 'UP'], ['Gurugram', 'HR'], ['Bengaluru', 'KA'], ['Hyderabad', 'TS'], ['Pune', 'MH'], ['Mumbai', 'MH'],
+  ['Kolkata', 'WB'], ['Jaipur', 'RJ'], ['Ahmedabad', 'GJ'], ['Chennai', 'TN'], ['Ludhiana', 'PB'], ['Jalandhar', 'PB'],
+  ['Patna', 'BR'], ['Indore', 'MP'], ['Lucknow', 'UP'], ['New Delhi', 'DL'], ['Kochi', 'KL'], ['Bhubaneswar', 'OD'],
+].map(([city, state], i) => ({ city, state, count: 220 - i * 11 }));
+
+const SCAM_SCRIPTS_DATA = [
+  { key: 'likeEarn', count: 1240, growth: 34 },
+  { key: 'prepaidTask', count: 980, growth: 22 },
+  { key: 'fakeOffer', count: 760, growth: 12 },
+  { key: 'dataEntry', count: 540, growth: -6 },
+  { key: 'reviewRating', count: 410, growth: 41 },
+  { key: 'crypto', count: 205, growth: 9 },
+];
+
+const SCAM_FEED_DATA = [
+  {
+    id: 'news_embassy',
+    label: 'Fake Russian Embassy Recruitment Scam',
+    date: 'Oct 2026',
+    severity: 'critical',
+    location: 'Delhi',
+    message: 'Delhi Police arrested two men for running a fake website (embassytest.com) mimicking the Russian Embassy to sell fake overseas jobs and collect illegal registration fees.',
+    kind: 'news'
+  },
+  {
+    id: 'news_task_rating',
+    label: 'Task-Based Online Shopping Fraud',
+    date: 'Oct 2026',
+    severity: 'critical',
+    location: 'Hyderabad',
+    message: 'A Hyderabad victim lost over ₹37 lakh to a remote "product rating" job. Scammers paid small early returns, then froze funds and demanded huge deposits to unlock payouts.',
+    kind: 'news'
+  },
+  {
+    id: 'news_govt_consultancy',
+    label: 'Government Job Consultancy Scheme',
+    date: 'Oct 2026',
+    severity: 'warning',
+    location: 'Crime Branch',
+    message: 'Crime Branch filed charges against fake job consultancies issuing forged government appointment letters and taking large upfront fees for "direct entry" job quotas.',
+    kind: 'news'
+  },
+  {
+    id: 'news_fake_it_recruiters',
+    label: 'Fake IT Recruiters on Telegram & WhatsApp',
+    date: 'Oct 2026',
+    severity: 'warning',
+    location: 'Cyber Crime Cell',
+    message: 'Cyber Crime authorities warn of scammers posing as HR from TCS, Google and other tech firms, collecting money for fake "training kits" or "background checks".',
+    kind: 'news'
+  }
+];
+
 app.get('/api/stats/threats', async (req, res) => {
   try {
     let count = isMongoConnected ? await ThreatScan.countDocuments() : inMemoryScans.length;
@@ -488,6 +558,10 @@ app.get('/api/stats/threats', async (req, res) => {
         reportsFiled: 912 + count,
         usersProtected: 48210 + (count * 12)
       },
+      states: STATE_TILES_DATA.map(s => ({ ...s, count: STATE_COUNTS_DATA[s.code] || 15 })),
+      cities: CITIES_DATA.slice(0, 8),
+      scripts: SCAM_SCRIPTS_DATA,
+      feed: SCAM_FEED_DATA,
       totalScans: count || 42,
       scamsDetected: Math.round((count || 42) * 0.78),
       moneySaved: '₹34,80,000+',
@@ -504,7 +578,11 @@ app.get('/api/stats/threats', async (req, res) => {
     });
   } catch (err) {
     res.json({
-      counters: { scamsToday: 1847, activeScripts: 23, flaggedUpi: 6412, reportsFiled: 912, usersProtected: 48210 }
+      counters: { scamsToday: 1847, activeScripts: 23, flaggedUpi: 6412, reportsFiled: 912, usersProtected: 48210 },
+      states: STATE_TILES_DATA.map(s => ({ ...s, count: STATE_COUNTS_DATA[s.code] || 15 })),
+      cities: CITIES_DATA.slice(0, 8),
+      scripts: SCAM_SCRIPTS_DATA,
+      feed: SCAM_FEED_DATA
     });
   }
 });

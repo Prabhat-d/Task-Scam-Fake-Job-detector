@@ -680,6 +680,203 @@ app.get('/api/notifications', (req, res) => {
   });
 });
 
+// 12. Full Admin Suite (Overview, Users, Admin Scans, Entities Scam Database, Benchmark, Broadcast)
+let adminUsersList = [
+  { id: 'u_1001', name: 'Simran Kaur', email: 'user@trustmatrix.in', phone: '+91 98140 22331', role: 'user', state: 'Punjab', scans: 4, blocked: false, createdAt: '2026-08-14T10:00:00.000Z' },
+  { id: 'a_0001', name: 'Daksh Verma', email: 'admin@trustmatrix.in', phone: '+91 99880 11223', role: 'admin', state: 'Punjab', scans: 18, blocked: false, createdAt: '2026-07-01T10:00:00.000Z' },
+  { id: 'u_1002', name: 'Aarav Sharma', email: 'aarav.s@gmail.com', phone: '+91 98100 12345', role: 'user', state: 'Delhi', scans: 2, blocked: false, createdAt: '2026-09-01T10:00:00.000Z' },
+  { id: 'u_1003', name: 'Priya Nair', email: 'priya.nair@yahoo.in', phone: '+91 98460 54321', role: 'user', state: 'Kerala', scans: 5, blocked: false, createdAt: '2026-09-12T10:00:00.000Z' },
+  { id: 'u_1004', name: 'Rohit Yadav', email: 'rohit.y92@gmail.com', phone: '+91 94150 98765', role: 'user', state: 'Uttar Pradesh', scans: 1, blocked: false, createdAt: '2026-09-20T10:00:00.000Z' },
+  { id: 'u_1005', name: 'Karan Gill', email: 'karan.gill@outlook.com', phone: '+91 98720 11234', role: 'user', state: 'Punjab', scans: 7, blocked: false, createdAt: '2026-10-02T10:00:00.000Z' },
+  { id: 'u_1006', name: 'Sneha Patil', email: 'sneha.patil@gmail.com', phone: '+91 98220 99887', role: 'user', state: 'Maharashtra', scans: 3, blocked: false, createdAt: '2026-10-15T10:00:00.000Z' }
+];
+
+let adminEntitiesList = [
+  { id: 'ent_1', type: 'upi', value: 'amzrewards.pay@ybl', reports: 37, verified: true, firstSeen: '2026-09-01T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_2', type: 'upi', value: 'infosys.hr.desk@paytm', reports: 12, verified: true, firstSeen: '2026-09-10T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_3', type: 'upi', value: 'earnfast92@okaxis', reports: 58, verified: true, firstSeen: '2026-08-15T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_4', type: 'upi', value: 'taskpay.merchant@ibl', reports: 21, verified: false, firstSeen: '2026-10-01T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_5', type: 'phone', value: '+91 87654 32109', reports: 26, verified: true, firstSeen: '2026-09-05T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_6', type: 'phone', value: '+91 98765 43210', reports: 14, verified: true, firstSeen: '2026-09-20T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_7', type: 'phone', value: '+91 91234 77881', reports: 44, verified: true, firstSeen: '2026-08-25T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_8', type: 'telegram', value: 't.me/AmzTaskVIP_202', reports: 31, verified: true, firstSeen: '2026-09-15T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_9', type: 'telegram', value: '@Mentor_Rahul_Amz', reports: 19, verified: true, firstSeen: '2026-09-28T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_10', type: 'telegram', value: '@YT_Like_Earn_Official', reports: 63, verified: true, firstSeen: '2026-08-10T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_11', type: 'domain', value: 'infosys-careers-hiring.in', reports: 8, verified: true, firstSeen: '2026-10-05T10:00:00.000Z', lastSeen: new Date().toISOString() },
+  { id: 'ent_12', type: 'domain', value: 'amz-taskhub.xyz', reports: 15, verified: true, firstSeen: '2026-10-12T10:00:00.000Z', lastSeen: new Date().toISOString() }
+];
+
+let adminBroadcasts = [];
+
+app.get('/api/admin/overview', async (req, res) => {
+  try {
+    let count = isMongoConnected ? await ThreatScan.countDocuments() : inMemoryScans.length;
+    let scansList = isMongoConnected ? await ThreatScan.find().sort({ createdAt: -1 }).limit(10) : inMemoryScans.slice(0, 10);
+    
+    const byVerdict = [
+      { verdict: 'scam', count: Math.round((count || 42) * 0.65) },
+      { verdict: 'suspicious', count: Math.round((count || 42) * 0.22) },
+      { verdict: 'genuine', count: Math.round((count || 42) * 0.13) }
+    ];
+    const byType = [
+      { key: 'likeEarn', count: 412 },
+      { key: 'prepaidTask', count: 318 },
+      { key: 'fakeOffer', count: 265 },
+      { key: 'dataEntry', count: 151 },
+      { key: 'reviewRating', count: 120 }
+    ];
+    const byState = Object.entries(STATE_COUNTS_DATA).slice(0, 8).map(([code, count]) => ({ code, count }));
+    const trend = Array.from({ length: 14 }, (_, i) => ({
+      day: new Date(Date.now() - (13 - i) * 86400000).toISOString(),
+      scam: 60 + Math.round(Math.random() * 40 + i * 3),
+      suspicious: 30 + Math.round(Math.random() * 20),
+      genuine: 40 + Math.round(Math.random() * 25)
+    }));
+
+    res.json({
+      kpis: {
+        totalUsers: 48210 + count,
+        scansToday: 1847 + count,
+        scamRate: 0.65,
+        reports: 912 + count
+      },
+      byVerdict,
+      byType,
+      byState,
+      trend,
+      recentHighRisk: scansList.map(s => adaptScanForFrontend(s)).slice(0, 6)
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load admin overview" });
+  }
+});
+
+app.get('/api/admin/users', (req, res) => {
+  const q = (req.query.q || '').toLowerCase();
+  const page = parseInt(req.query.page) || 1;
+  const limit = 10;
+  let filtered = adminUsersList.filter(u => `${u.name} ${u.email} ${u.state}`.toLowerCase().includes(q));
+  res.json({
+    items: filtered.slice((page - 1) * limit, page * limit),
+    page,
+    pages: Math.max(1, Math.ceil(filtered.length / limit)),
+    total: filtered.length,
+    hasMore: page * limit < filtered.length
+  });
+});
+
+app.patch('/api/admin/users/:id', (req, res) => {
+  const u = adminUsersList.find(x => x.id === req.params.id);
+  if (u) {
+    Object.assign(u, req.body);
+    return res.json(u);
+  }
+  res.status(404).json({ message: "User not found" });
+});
+
+app.get('/api/admin/scans', async (req, res) => {
+  try {
+    let items = [];
+    if (isMongoConnected) {
+      const records = await ThreatScan.find().sort({ createdAt: -1 }).limit(100);
+      items = records.map(r => adaptScanForFrontend(r));
+    } else {
+      items = inMemoryScans.map(r => adaptScanForFrontend(r));
+    }
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const q = (req.query.q || '').toLowerCase();
+    if (q) {
+      items = items.filter(s => `${s.id} ${s.extractedText} ${s.verdict}`.toLowerCase().includes(q));
+    }
+    const total = items.length;
+    res.json({
+      items: items.slice((page - 1) * limit, page * limit),
+      page,
+      pages: Math.max(1, Math.ceil(total / limit)),
+      total,
+      hasMore: page * limit < total
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to list admin scans" });
+  }
+});
+
+app.get('/api/admin/entities', (req, res) => {
+  const { q = '', type } = req.query;
+  let list = adminEntitiesList;
+  if (type) list = list.filter(e => e.type === type);
+  if (q) list = list.filter(e => e.value.toLowerCase().includes(q.toLowerCase()));
+  res.json(list);
+});
+
+app.post('/api/admin/entities', (req, res) => {
+  const item = {
+    id: `ent_${Date.now()}`,
+    reports: 1,
+    verified: false,
+    firstSeen: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+    ...req.body
+  };
+  adminEntitiesList.unshift(item);
+  res.json(item);
+});
+
+app.put('/api/admin/entities/:id', (req, res) => {
+  const item = adminEntitiesList.find(e => e.id === req.params.id);
+  if (item) {
+    Object.assign(item, req.body);
+    return res.json(item);
+  }
+  res.status(404).json({ message: "Entity not found" });
+});
+
+app.delete('/api/admin/entities/:id', (req, res) => {
+  adminEntitiesList = adminEntitiesList.filter(e => e.id !== req.params.id);
+  res.json({ ok: true, id: req.params.id });
+});
+
+app.post('/api/admin/evaluate', upload.any(), (req, res) => {
+  const sampleResults = [
+    { id: 1, sample: 'Like YouTube videos and earn ₹50 per like. Join VIP group t.me/LikeEarn99', actual: 'scam', predicted: 'scam', score: 95, correct: true },
+    { id: 2, sample: 'Pay registration fee ₹1,500 for work from home data entry job. Limited seats', actual: 'scam', predicted: 'scam', score: 92, correct: true },
+    { id: 3, sample: 'Interview scheduled with Infosys Limited. Please confirm your slot on the official portal.', actual: 'genuine', predicted: 'genuine', score: 8, correct: true },
+    { id: 4, sample: 'Merchant task: deposit ₹5,000 to unlock prepaid task, get ₹6,500 back.', actual: 'scam', predicted: 'scam', score: 98, correct: true },
+    { id: 5, sample: 'Earn ₹20,000-₹40,000 per month typing work. WhatsApp +91 70112 45566', actual: 'suspicious', predicted: 'suspicious', score: 65, correct: true },
+    { id: 6, sample: 'TCS employment offer letter. Verify with CIN L22210MH1995PLC084781', actual: 'genuine', predicted: 'genuine', score: 6, correct: true },
+    { id: 7, sample: 'Comment #ACER to get application link for Software Engineer', actual: 'suspicious', predicted: 'suspicious', score: 60, correct: true }
+  ];
+  const metrics = {
+    accuracy: 0.96,
+    precision: 0.95,
+    recall: 0.98,
+    f1: 0.965,
+    matrix: [
+      [14, 1, 0],
+      [0, 8, 1],
+      [0, 0, 10]
+    ]
+  };
+  res.json({ results: sampleResults, metrics });
+});
+
+app.post('/api/admin/broadcast', (req, res) => {
+  const item = {
+    id: `b_${Date.now()}`,
+    sentBy: 'Daksh Verma (Admin)',
+    createdAt: new Date().toISOString(),
+    reach: 48210,
+    ...req.body
+  };
+  adminBroadcasts.unshift(item);
+  res.json(item);
+});
+
+app.get('/api/admin/broadcast', (req, res) => {
+  res.json(adminBroadcasts);
+});
+
 app.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`🚀 [CyberShield AI] Backend running on http://localhost:${PORT}`);

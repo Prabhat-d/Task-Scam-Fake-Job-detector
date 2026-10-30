@@ -100,12 +100,24 @@ function adaptScanForFrontend(savedRecord, files = []) {
     ageDays: 450
   };
 
-  const entities = {
-    upi: savedRecord.dossier1930?.upiIds || [],
-    phone: savedRecord.dossier1930?.phoneNumbers || [],
-    telegram: savedRecord.dossier1930?.telegramHandles || [],
-    links: savedRecord.dossier1930?.links || []
+  const entityList = [];
+  const dossier = savedRecord.dossier1930 || {};
+  
+  const toArray = (v) => {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+      const clean = v.trim();
+      if (!clean || clean.toLowerCase().includes('not found')) return [];
+      return clean.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return [];
   };
+
+  toArray(dossier.upiIds).forEach(v => entityList.push({ type: 'upi', value: v, seenCount: 1 }));
+  toArray(dossier.phoneNumbers).forEach(v => entityList.push({ type: 'phone', value: v, seenCount: 1 }));
+  toArray(dossier.telegramHandles).forEach(v => entityList.push({ type: 'telegram', value: v, seenCount: 1 }));
+  toArray(dossier.links).forEach(v => entityList.push({ type: 'link', value: v, seenCount: 0 }));
 
   const summary = savedRecord.summary || {
     en: `Analysis completed with risk score ${savedRecord.riskScore}/100.`,
@@ -150,7 +162,7 @@ function adaptScanForFrontend(savedRecord, files = []) {
     },
     company,
     domain,
-    entities,
+    entities: entityList,
     files: files.map((f, idx) => ({
       id: `${scanId}_f${idx}`,
       name: f.originalname || f.name || 'document',
@@ -468,13 +480,31 @@ app.get('/api/stats/threats', async (req, res) => {
   try {
     let count = isMongoConnected ? await ThreatScan.countDocuments() : inMemoryScans.length;
     res.json({
+      counters: {
+        scamsToday: 1847 + (count * 3),
+        activeScripts: 23,
+        flaggedUpi: 6412 + count,
+        reportsFiled: 912 + count,
+        usersProtected: 48210 + (count * 12)
+      },
       totalScans: count || 42,
       scamsDetected: Math.round((count || 42) * 0.78),
       moneySaved: '₹34,80,000+',
-      helplineCallsPrevented: 184
+      helplineCallsPrevented: 184,
+      hourly: Array.from({ length: 24 }, (_, i) => ({
+        hour: new Date(Date.now() - (23 - i) * 3600000).toISOString(),
+        scams: 20 + Math.floor(Math.random() * 15)
+      })),
+      topEntities: [
+        { type: 'upi', value: 'earnfast92@okaxis', reports: 34 },
+        { type: 'phone', value: '+919123477881', reports: 28 },
+        { type: 'telegram', value: '@amazon_task_vip', reports: 41 }
+      ]
     });
   } catch (err) {
-    res.json({ totalScans: 42, scamsDetected: 33 });
+    res.json({
+      counters: { scamsToday: 1847, activeScripts: 23, flaggedUpi: 6412, reportsFiled: 912, usersProtected: 48210 }
+    });
   }
 });
 

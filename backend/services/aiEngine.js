@@ -1,19 +1,38 @@
-const { GoogleGenAI } = require("@google/genai");
 const { verifyCompanyAgainstMCA } = require("./mcaVerifier");
 
 // PROMPT 1: Rapid Entity, Pattern & Forensic Threat Extraction (Model A)
 const PATTERN_EXTRACTION_PROMPT = `
-You are an expert Cybercrime Investigator specializing in Indian Task Scams, Telegram Pre-paid Frauds, and Fake Job Offers (CTBF-AI-11).
-Analyze the provided text or image screenshot and extract technical threat indicators. Output strict JSON:
+You are an expert Cybercrime Investigator and Fraud Analyst specializing in Indian Task Scams, Telegram Frauds, Fake Job Offers, and Unofficial Proxy Recruitment Bait (CTBF-AI-11).
+
+Analyze the provided text and/or image screenshot carefully.
+Step 1: If an image is provided, perform high-fidelity OCR to extract ALL visible text (author name, poster title/company, post body, banner text, small print, and legal disclaimers).
+Step 2: Detect threat indicators and classify into one of three categories:
+
+1. CRITICAL_SCAM (RiskScore 80-100):
+   - Asking for advance money (registration fee, laptop security deposit, document verification fee).
+   - "Like YouTube videos / rate hotels" tasks with prepaid deposit or unfreeze traps.
+   - Fake offer letters with template placeholder artifacts (e.g., Canva domains like 'reallygreatsite.com', dummy addresses like '123 Anywhere St', duplicate sections).
+
+2. SUSPICIOUS (RiskScore 50-75):
+   - Third-party proxy recruitment / engagement bait: Posts using a big brand's logo (e.g., Acer, Google, TCS) but authored by third-party individuals (e.g., "Campaign Associate @ NetworkEdge Solutions" or independent agencies).
+   - "Comment to get link" tactics: Requiring users to comment (e.g., "Comment #ACER to get apply link") rather than providing a direct official company career portal URL.
+   - Disclaimers admitting details are unverified or not official company announcements.
+   - Using free mail (@gmail.com, @yahoo.com) for corporate enterprise hiring.
+
+3. GENUINE_OFFER (RiskScore 0-15):
+   - Direct, verified corporate career postings from official portals (e.g., career.infosys.com, indeed.com, linkedin official company page) with direct application links, no comment lures, and no financial demands.
+
+Output strict JSON:
 {
-  "riskScore": <integer 0-100. IMPORTANT: If the posting is a genuine corporate job listing from an official company portal (like Indeed, LinkedIn, Infosys, Amazon) with no deposit requests, fees, or Telegram links, riskScore MUST be below 15>,
-  "verdict": "<'GENUINE_OFFER' | 'SUSPICIOUS' | 'CRITICAL_SCAM'>",
-  "category": "<e.g., 'Authentic Corporate Career Posting', 'Telegram Task Fraud', 'Tiered Prepaid Deposit Scam'>",
+  "ocrText": "<Full verbatim transcribed text from the image, or empty string if text-only input>",
+  "riskScore": <integer 0-100 according to above thresholds>,
+  "verdict": "<'CRITICAL_SCAM' | 'SUSPICIOUS' | 'GENUINE_OFFER'>",
+  "category": "<e.g., 'Third-Party Engagement Bait / Unofficial Recruitment Proxy', 'Template Job Offer Fraud', 'Prepaid Task Scam', 'Authentic Corporate Career Posting'>",
   "claimedCompany": "<Extracted company name>",
-  "currentStage": <0 for genuine, 1 for Hook, 2 for Trust Building, 3 for Prepaid Trap, 4 for Extortion>,
-  "stageName": "<Stage title, or 'Safe / Verified Job' if genuine>",
+  "currentStage": <integer 0 for genuine, 1 for Hook/Bait, 2 for Trust Building, 3 for Prepaid Trap, 4 for Extortion/Frozen>,
+  "stageName": "<Stage title, e.g. 'Stage 1: Engagement Bait / Proxy Funnel' or 'Safe / Verified Job'>",
   "stageDescription": "<Summary of what this document or communication represents>",
-  "redFlags": ["<list any detected red flags; leave empty [] if genuine>"],
+  "redFlags": ["<list every detected red flag with quotes from the text>"],
   "phoneNumbers": ["<extracted phone numbers>"],
   "telegramHandles": ["<extracted telegram handles or group URLs>"],
   "upiIds": ["<extracted UPI IDs or bank accounts>"]
@@ -23,16 +42,22 @@ Analyze the provided text or image screenshot and extract technical threat indic
 // PROMPT 2: Deep Behavioral Grooming & Next-Move Predictive Warning (Model B)
 const BEHAVIORAL_PREDICTION_PROMPT = `
 You are a Cyber-Psychology and Threat Prediction Engine (CTBF-AI-11).
-Analyze the psychological grooming in this image or chat, and predict the scammer's next move.
-IMPORTANT:
-- If this is a GENUINE corporate job posting with standard requirements, official career links (e.g. indeed.com, career.infosys.com), and no suspicious deposit requests:
-  Set confidenceScore < 15, victimGroomingAnalysis to 'Legitimate Enterprise Recruiting', predictedNextMove to 'Proceed through the official employer portal (e.g. indeed.com/careers). No fraudulent activity or deposit risk detected.', and policeNarrative to ''.
+Analyze the psychological grooming, social engineering, and engagement tactics in this image or text, and predict the scammer's or proxy recruiter's next move.
+
+GUIDELINES:
+- If this is a Third-Party Engagement Bait or Unofficial Proxy Post (e.g., "Comment #ACER to get link", third-party poster using a corporate logo):
+  Explain that third parties leverage brand logos to farm comments and profile reach, and warn candidates that commenting will lead to DM spam, unverified affiliate links, or funneling into paid coaching / WhatsApp groups.
+- If this is a Task Scam or Advance Fee Scam:
+  Predict the financial trap (unfreeze fee, combo task, fake tax).
+- If this is genuine corporate recruitment with no tricks:
+  Advise safe proceeding through official portal.
+
 Output strict JSON:
 {
   "confidenceScore": <integer 0-100>,
-  "victimGroomingAnalysis": "<Psychological tactic being used, or 'Legitimate Corporate Recruiting' if genuine>",
-  "predictedNextMove": "<Next move warning if scam, or safe advisory if genuine>",
-  "policeNarrative": "<Formal statement for 1930 Helpline if scam; empty string if genuine>"
+  "victimGroomingAnalysis": "<Psychological / social engineering tactic being used>",
+  "predictedNextMove": "<Next move warning>",
+  "policeNarrative": "<Formal statement for 1930 Helpline or Cyber Safety advisory>"
 }
 `;
 
@@ -51,15 +76,16 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
 
   if (apiKey && !apiKey.includes("YOUR_")) {
     try {
+      const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
 
       const buildParts = (promptText) => {
-        const parts = [{ text: `${promptText}\n\nCONTENT TO ANALYZE:\n${textContent}` }];
+        const parts = [{ text: `${promptText}\n\nUSER INPUT / METADATA:\n${textContent}` }];
         if (imageBuffer) {
           parts.push({
             inlineData: {
               data: imageBuffer.toString("base64"),
-              mimeType: mimeType || "image/png"
+              mimeType: mimeType || "image/jpeg"
             }
           });
         }
@@ -83,41 +109,55 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       const parsedA = JSON.parse(resModelA.text);
       const parsedB = JSON.parse(resModelB.text);
 
-      const isGenuineVerdict = parsedA.verdict === "GENUINE_OFFER";
+      const ocrExtracted = parsedA.ocrText || "";
+      const combinedAnalysisText = `${textContent}\n${ocrExtracted} ${(parsedA.redFlags || []).join(" ")}`;
 
       // Perform Real Live DNS & MCA Verification on detected company/emails
-      const mcaResult = await verifyCompanyAgainstMCA(parsedA.claimedCompany, textContent + " " + (parsedA.redFlags || []).join(" "));
+      const mcaResult = await verifyCompanyAgainstMCA(parsedA.claimedCompany, combinedAnalysisText);
 
-      // Calibrate Consensus Risk Score
-      let finalRiskScore = Math.max(parsedA.riskScore || 0, parsedB.confidenceScore || 0);
-      if (isGenuineVerdict) {
-        finalRiskScore = Math.min(finalRiskScore, 10);
+      // Determine Final Calibrated Verdict & Score
+      let finalRiskScore = parsedA.riskScore || 50;
+      let finalVerdict = parsedA.verdict || "SUSPICIOUS";
+
+      if (parsedA.redFlags && parsedA.redFlags.length > 0) {
+        if (finalRiskScore < 50) finalRiskScore = 55;
       }
+
+      if (finalVerdict === "GENUINE_OFFER" && parsedA.redFlags.length === 0) {
+        finalRiskScore = Math.min(finalRiskScore, 12);
+      } else if (finalVerdict === "CRITICAL_SCAM") {
+        finalRiskScore = Math.max(finalRiskScore, 80);
+      } else if (finalVerdict === "SUSPICIOUS") {
+        finalRiskScore = Math.max(finalRiskScore, 55);
+      }
+
+      const isGenuine = finalVerdict === "GENUINE_OFFER";
 
       return {
         multiAgentConsensus: {
           engineA: "gemini-3.5-flash-lite (Multimodal Forensic Classifier)",
           engineB: "gemini-3.5-flash-lite (Behavioral & Next-Move Predictor)",
           consensusScore: finalRiskScore,
-          liveDnsAudit: mcaResult.liveDnsVerified ? "Passed (Active MX Mail Server)" : (isGenuineVerdict ? "Not Flagged (Legitimate Portal)" : "Flagged / Mismatch")
+          liveDnsAudit: mcaResult.liveDnsVerified ? "Passed (Active MX Mail Server)" : (isGenuine ? "Not Flagged (Legitimate Portal)" : "Flagged / Mismatch")
         },
         riskScore: finalRiskScore,
-        verdict: parsedA.verdict || (finalRiskScore > 70 ? "CRITICAL_SCAM" : "GENUINE_OFFER"),
+        verdict: finalVerdict,
         category: parsedA.category || "Career Opportunity",
+        extractedText: ocrExtracted || textContent,
         scamStage: {
-          currentStage: isGenuineVerdict ? 0 : (parsedA.currentStage || 2),
-          stageName: isGenuineVerdict ? "Safe / Non-Scam" : (parsedA.stageName || "Stage 2: Trust Building"),
-          stageDescription: isGenuineVerdict ? "Legitimate verified job posting." : (parsedA.stageDescription || "Potential scam script detected."),
-          predictedNextMove: isGenuineVerdict ? "Apply through the official career portal. No security threats or upfront payments required." : (parsedB.predictedNextMove || "Do not transfer any money!")
+          currentStage: isGenuine ? 0 : (parsedA.currentStage || 1),
+          stageName: isGenuine ? "Safe / Non-Scam" : (parsedA.stageName || "Stage 1: Hook / Funnel"),
+          stageDescription: isGenuine ? "Legitimate verified job posting." : (parsedA.stageDescription || "Suspicious hiring pattern detected."),
+          predictedNextMove: isGenuine ? "Apply through the official career portal. No security threats or upfront payments required." : (parsedB.predictedNextMove || "Do not transfer money or engage through unofficial comment sections.")
         },
         behavioralAnalysis: parsedB.victimGroomingAnalysis,
         companyVerification: mcaResult,
         redFlags: parsedA.redFlags || [],
-        dossier1930: isGenuineVerdict ? null : {
+        dossier1930: isGenuine ? null : {
           phoneNumbers: (parsedA.phoneNumbers && parsedA.phoneNumbers.length > 0) ? parsedA.phoneNumbers : (phones.length > 0 ? phones : ["Extracted from text"]),
           telegramHandles: (parsedA.telegramHandles && parsedA.telegramHandles.length > 0) ? parsedA.telegramHandles : (telegramHandles.length > 0 ? telegramHandles : ["None"]),
           upiIds: (parsedA.upiIds && parsedA.upiIds.length > 0) ? parsedA.upiIds : (upis.length > 0 ? upis : ["None detected"]),
-          impersonatedEntity: mcaResult.claimedCompany,
+          impersonatedEntity: mcaResult.claimedCompany || parsedA.claimedCompany || "Unspecified Entity",
           policeNarrative: parsedB.policeNarrative || "Victim targeted by an online employment task scam demanding financial deposits."
         }
       };
@@ -127,48 +167,22 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   }
 
   // Fallback Heuristics
-  const lower = textContent.toLowerCase();
-  const isGenuine = (lower.includes("indeed") || lower.includes("infosys")) && lower.includes("software engineer") && !lower.includes("deposit");
-
-  if (isGenuine) {
-    const mca = await verifyCompanyAgainstMCA("Indeed", "https://www.indeed.com");
-    return {
-      multiAgentConsensus: {
-        engineA: "Deterministic Rule Classifier",
-        engineB: "Corporate Integrity Auditor",
-        consensusScore: 4,
-        liveDnsAudit: "Verified"
-      },
-      riskScore: 4,
-      verdict: "GENUINE_OFFER",
-      category: "Authentic Corporate Employment",
-      scamStage: {
-        currentStage: 0,
-        stageName: "Safe / Non-Scam",
-        stageDescription: "Standard verified enterprise offer or job listing.",
-        predictedNextMove: "Proceed via official employer career portal. No financial danger identified."
-      },
-      companyVerification: mca,
-      redFlags: [],
-      dossier1930: null
-    };
-  }
-
   return {
     multiAgentConsensus: {
       engineA: "Deterministic Forensic Matcher",
       engineB: "Stage Progression Machine",
-      consensusScore: 95,
+      consensusScore: 65,
       liveDnsAudit: "Flagged"
     },
-    riskScore: 95,
-    verdict: "CRITICAL_SCAM",
-    category: "Prepaid Task / Telegram Fraud",
+    riskScore: 65,
+    verdict: "SUSPICIOUS",
+    category: "Unofficial Employment / Lead Bait",
+    extractedText: textContent,
     scamStage: {
-      currentStage: 3,
-      stageName: "Stage 3: Prepaid Trap",
-      stageDescription: "Multi-stage social engineering script detected.",
-      predictedNextMove: "They demand money for upgraded tasks. If you pay, they will freeze your account next."
+      currentStage: 1,
+      stageName: "Stage 1: Hook / Lead Bait",
+      stageDescription: "Unverified job listing pattern.",
+      predictedNextMove: "Verify through official portal before applying."
     },
     companyVerification: {
       claimedCompany: "Unverified Employer",
@@ -176,7 +190,7 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       isOfficialDomain: false,
       mcaStatus: "Unverified"
     },
-    redFlags: ["Demanding prepaid deposit or refundable security fee"],
+    redFlags: ["Third-party post without official corporate confirmation"],
     dossier1930: null
   };
 }

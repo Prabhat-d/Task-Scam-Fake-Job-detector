@@ -229,11 +229,12 @@ async function processScan(req, res) {
     const analysis = await analyzeThreat(text, process.env.GEMINI_API_KEY, imageBuffer, mimeType);
 
     // Save to Database (MongoDB Atlas)
+    const storedText = (analysis.extractedText && analysis.extractedText.length > 20) ? analysis.extractedText : (text + (primaryFile ? ` (Image: ${primaryFile.originalname})` : ""));
     let savedRecord = null;
     if (isMongoConnected) {
       try {
         savedRecord = await ThreatScan.create({
-          rawInput: text + (primaryFile ? ` (Image: ${primaryFile.originalname})` : ""),
+          rawInput: storedText,
           riskScore: analysis.riskScore,
           verdict: analysis.verdict,
           category: analysis.category,
@@ -251,7 +252,7 @@ async function processScan(req, res) {
       savedRecord = {
         scanId: `SCAN-${Math.floor(100000 + Math.random() * 900000)}`,
         createdAt: new Date(),
-        rawInput: text,
+        rawInput: storedText,
         ...analysis
       };
       inMemoryScans.unshift(savedRecord);

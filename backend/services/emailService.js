@@ -3,20 +3,24 @@ const nodemailer = require('nodemailer');
 // In-memory OTP Store: email -> { otp, purpose, expiresAt, payload }
 const otpCache = new Map();
 
-// Configure Mail Transporter
-let transporter = null;
-
-if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  transporter = nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE || 'gmail',
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
+/**
+ * Configure Mail Transporter
+ * If EMAIL_USER and EMAIL_PASS are set in backend/.env, uses Gmail SMTP to send real emails.
+ */
+function getTransporter() {
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    return nodemailer.createTransport({
+      service: process.env.EMAIL_SERVICE || 'gmail',
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
+      secure: process.env.SMTP_SECURE === 'true' || !process.env.SMTP_PORT,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS.replace(/\s+/g, '') // remove spaces from Gmail app password
+      }
+    });
+  }
+  return null;
 }
 
 /**
@@ -41,19 +45,19 @@ async function sendOtp(email, purpose = 'mfa', payload = {}) {
     payload
   });
 
+  const transporter = getTransporter();
+  let emailSent = false;
+
   console.log(`\n======================================================`);
   console.log(`📨 [OTP Dispatcher] ${purpose.toUpperCase()} Code for: ${cleanEmail}`);
   console.log(`🔑 Verification OTP: ${otp} (Valid for 5 mins)`);
-  console.log(`======================================================\n`);
-
-  let emailSent = false;
 
   if (transporter) {
     try {
       const subjectMap = {
         mfa: 'CyberShield AI - Your Login Verification Code (MFA)',
         register: 'CyberShield AI - Confirm Your Email & Complete Signup',
-        reset_password: 'CyberShield AI - Password Reset Request'
+        reset_password: 'CyberShield AI - Password Reset Code'
       };
 
       const htmlContent = `
@@ -82,17 +86,23 @@ async function sendOtp(email, purpose = 'mfa', payload = {}) {
       emailSent = true;
       console.log(`✅ [Email Dispatcher] Real email delivered to ${cleanEmail}`);
     } catch (err) {
-      console.warn(`⚠️ [Email Dispatcher] Real email delivery failed: ${err.message}. Code remains available in console.`);
+      console.warn(`⚠️ [Email Dispatcher] Email delivery failed: ${err.message}`);
     }
+  } else {
+    console.log(`ℹ️ [Email Dispatcher] Real email not dispatched because EMAIL_USER / EMAIL_PASS is not configured in backend/.env`);
+    console.log(`👉 To deliver real emails to your Gmail inbox, add:`);
+    console.log(`   EMAIL_USER=your_email@gmail.com`);
+    console.log(`   EMAIL_PASS=your_16_digit_gmail_app_password`);
+    console.log(`   to backend/.env`);
   }
+  console.log(`======================================================\n`);
 
+  // NOTE: Never return OTP to the client in production!
   return {
     success: true,
     email: cleanEmail,
     expiresIn: 300,
-    emailSent,
-    // Provide previewOtp in dev mode so testing never gets stuck
-    previewOtp: otp
+    emailSent
   };
 }
 
@@ -117,7 +127,7 @@ function verifyOtp(email, inputOtp, purpose = null) {
   }
 
   if (record.otp !== String(inputOtp).trim()) {
-    return { valid: false, error: 'Incorrect 6-digit verification code. Please check and try again.' };
+    return { valid: false, error: 'Incorrect 6-digit verification code. Please check your email and try again.' };
   }
 
   // Success: consume the OTP

@@ -549,8 +549,7 @@ app.post('/api/auth/login', async (req, res) => {
       mfaRequired: true,
       email: cleanEmail,
       message: 'A 6-digit MFA verification code has been dispatched to your email.',
-      expiresIn: otpResult.expiresIn,
-      previewOtp: otpResult.previewOtp
+      expiresIn: otpResult.expiresIn
     });
   } catch (err) {
     console.error('Login Error:', err);
@@ -582,8 +581,7 @@ app.post('/api/auth/register', async (req, res) => {
       mfaRequired: true,
       email: cleanEmail,
       message: 'A 6-digit confirmation code has been sent to your email to complete registration.',
-      expiresIn: otpResult.expiresIn,
-      previewOtp: otpResult.previewOtp
+      expiresIn: otpResult.expiresIn
     });
   } catch (err) {
     console.error('Register Error:', err);
@@ -656,8 +654,7 @@ app.post('/api/auth/resend-otp', async (req, res) => {
     const result = await sendOtp(cleanEmail, purpose || 'mfa');
     res.json({
       success: true,
-      message: 'A new 6-digit code has been dispatched to your email.',
-      previewOtp: result.previewOtp
+      message: 'A new 6-digit code has been dispatched to your email.'
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to resend code' });
@@ -676,8 +673,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     console.log(`🔑 [Password Reset] Reset code sent to ${cleanEmail}`);
     res.json({
       success: true,
-      message: 'Password reset code has been sent to your email.',
-      previewOtp: otpResult.previewOtp
+      message: 'Password reset code has been sent to your email.'
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to initiate password reset' });

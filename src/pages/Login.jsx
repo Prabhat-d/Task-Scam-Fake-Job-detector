@@ -26,7 +26,7 @@ export default function Login() {
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
-  const [mfaData, setMfaData] = useState(null); // { email, previewOtp }
+  const [mfaData, setMfaData] = useState(null); // { email }
 
   const validate = () => {
     const e = {};
@@ -46,8 +46,7 @@ export default function Login() {
       const res = await login(form);
       if (res?.mfaRequired) {
         setMfaData({
-          email: res.email || form.email,
-          previewOtp: res.previewOtp
+          email: res.email || form.email
         });
         return;
       }
@@ -95,7 +94,6 @@ export default function Login() {
         <OtpVerification
           email={mfaData.email}
           purpose="mfa"
-          previewOtp={mfaData.previewOtp}
           onSuccess={handleOtpSuccess}
           onBack={() => setMfaData(null)}
         />

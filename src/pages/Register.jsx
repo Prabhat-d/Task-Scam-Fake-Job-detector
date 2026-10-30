@@ -28,7 +28,7 @@ export default function Register() {
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
-  const [mfaData, setMfaData] = useState(null); // { email, previewOtp }
+  const [mfaData, setMfaData] = useState(null); // { email }
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -54,8 +54,7 @@ export default function Register() {
       const res = await register(payload);
       if (res?.mfaRequired) {
         setMfaData({
-          email: res.email || form.email,
-          previewOtp: res.previewOtp
+          email: res.email || form.email
         });
         return;
       }
@@ -102,7 +101,6 @@ export default function Register() {
         <OtpVerification
           email={mfaData.email}
           purpose="register"
-          previewOtp={mfaData.previewOtp}
           onSuccess={handleOtpSuccess}
           onBack={() => setMfaData(null)}
         />

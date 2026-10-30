@@ -153,31 +153,6 @@ export default function OtpVerification({
         </p>
       </div>
 
-      {/* Demo / Developer Preview Helper Pill */}
-      {currentPreviewOtp && (
-        <div className="p-3 rounded-xl bg-teal/10 border border-teal/30 flex items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2">
-            <ShieldCheck size={16} className="text-teal shrink-0" />
-            <div>
-              <span className="text-[10px] uppercase font-bold text-teal block">
-                MFA Dispatcher Active
-              </span>
-              <span className="text-body text-xs">
-                Email Code: <b className="mono font-bold text-heading tracking-widest">{currentPreviewOtp}</b>
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={fillPreviewOtp}
-            className="btn btn-secondary btn-sm text-[11px] py-1 px-2.5 inline-flex items-center gap-1 shrink-0"
-          >
-            {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
-            {copied ? 'Filled!' : 'Auto-Fill'}
-          </button>
-        </div>
-      )}
-
       {/* 6 Digit Input Boxes */}
       <div className="space-y-3">
         <div className="flex items-center justify-center gap-2 sm:gap-3" onPaste={handlePaste}>

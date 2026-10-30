@@ -13,7 +13,6 @@ export default function ForgotPassword() {
   const [step, setStep] = useState(1); // 1 = Enter Email, 2 = Enter OTP & New Password, 3 = Success
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [previewOtp, setPreviewOtp] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -29,8 +28,7 @@ export default function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      const res = await authService.forgotPassword({ email });
-      if (res?.previewOtp) setPreviewOtp(res.previewOtp);
+      await authService.forgotPassword({ email });
       toast.success('Password reset code sent to your email!');
       setStep(2);
     } catch (err) {
@@ -126,22 +124,6 @@ export default function ForgotPassword() {
           {error && (
             <div role="alert" className="panel-danger rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-300">
               {error}
-            </div>
-          )}
-
-          {/* Demo Preview Helper */}
-          {previewOtp && (
-            <div className="p-2.5 rounded-xl bg-teal/10 border border-teal/30 text-xs flex items-center justify-between">
-              <span className="text-body text-[11px]">
-                Reset Code: <b className="mono text-heading font-bold tracking-widest">{previewOtp}</b>
-              </span>
-              <button
-                type="button"
-                onClick={() => setOtp(previewOtp)}
-                className="btn btn-secondary btn-sm text-[10px] py-0.5 px-2"
-              >
-                Auto-Fill
-              </button>
             </div>
           )}
 

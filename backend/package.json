@@ -16,6 +16,7 @@
     "groq-sdk": "^1.6.0",
     "mongoose": "^8.3.2",
     "multer": "^2.5.0",
+    "nodemailer": "^10.3.1",
     "socket.io": "^4.8.4"
   }
 }

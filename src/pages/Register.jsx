@@ -61,8 +61,9 @@ export default function Register() {
       setLang(form.language, { persistToProfile: false });
       navigate('/dashboard', { replace: true });
     } catch (err) {
+      const serverErr = err.response?.data?.error;
       const code = err.response?.data?.message;
-      setFormError(t(`auth.errors.${code}`, { defaultValue: t('auth.errors.generic') }));
+      setFormError(serverErr || (code ? t(`auth.errors.${code}`) : t('auth.errors.generic')));
     } finally {
       setLoading(false);
     }

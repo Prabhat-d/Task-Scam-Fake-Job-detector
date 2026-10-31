@@ -53,8 +53,9 @@ export default function Login() {
       const user = res?.user || res;
       navigate(returnPath(location.state?.from, user) || homeFor(user), { replace: true });
     } catch (err) {
+      const serverErr = err.response?.data?.error;
       const code = err.response?.data?.message;
-      setFormError(t(`auth.errors.${code}`, { defaultValue: t('auth.errors.generic') }));
+      setFormError(serverErr || (code ? t(`auth.errors.${code}`) : t('auth.errors.generic')));
     } finally {
       setLoading(false);
     }

@@ -32,7 +32,7 @@ export default function ForgotPassword() {
       toast.success('Password reset code sent to your email!');
       setStep(2);
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not send reset code. Please try again.');
+      setError(err.response?.data?.error || err.response?.data?.message || 'Could not send reset code. Please try again.');
     } finally {
       setLoading(false);
     }

@@ -673,7 +673,10 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     console.log(`🔑 [Password Reset] Reset code sent to ${cleanEmail}`);
     res.json({
       success: true,
-      message: 'Password reset code has been sent to your email.'
+      emailSent: otpResult.emailSent,
+      message: otpResult.emailSent
+        ? 'Password reset code has been sent to your email.'
+        : 'Password reset code generated. Note: Configure EMAIL_PASS in backend/.env for inbox delivery.'
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to initiate password reset' });

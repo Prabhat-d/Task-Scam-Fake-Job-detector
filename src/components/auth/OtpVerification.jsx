@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ShieldCheck, Mail, ArrowLeft, RefreshCw, KeyRound, Copy, Check } from 'lucide-react';
+import { ShieldCheck, ArrowLeft, RefreshCw, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Button from '../common/Button.jsx';
 import { authService } from '../../services/authService.js';
@@ -8,7 +8,6 @@ import { authService } from '../../services/authService.js';
 export default function OtpVerification({
   email,
   purpose = 'mfa',
-  previewOtp = null,
   onSuccess,
   onBack
 }) {
@@ -16,8 +15,6 @@ export default function OtpVerification({
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
-  const [currentPreviewOtp, setCurrentPreviewOtp] = useState(previewOtp);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [timeLeft, setTimeLeft] = useState(60);
 
@@ -109,10 +106,7 @@ export default function OtpVerification({
     setResending(true);
     setError('');
     try {
-      const res = await authService.resendOtp({ email, purpose });
-      if (res.previewOtp) {
-        setCurrentPreviewOtp(res.previewOtp);
-      }
+      await authService.resendOtp({ email, purpose });
       setTimeLeft(60);
       setDigits(['', '', '', '', '', '']);
       inputsRef.current[0]?.focus();
@@ -122,15 +116,6 @@ export default function OtpVerification({
     } finally {
       setResending(false);
     }
-  };
-
-  const fillPreviewOtp = () => {
-    if (!currentPreviewOtp) return;
-    const split = currentPreviewOtp.split('');
-    setDigits(split);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    handleVerify(currentPreviewOtp);
   };
 
   return (

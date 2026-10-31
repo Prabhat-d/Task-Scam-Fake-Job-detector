@@ -42,14 +42,9 @@ export default function OtpVerification({
     newDigits[index] = cleaned;
     setDigits(newDigits);
 
-    // Auto-advance to next box if digit entered
+    // Auto-advance to next box if digit entered (stops at box 6 without auto-submitting)
     if (cleaned && index < 5) {
       inputsRef.current[index + 1]?.focus();
-    }
-
-    // Auto-submit if all 6 digits entered
-    if (cleaned && index === 5 && newDigits.every((d) => d !== '')) {
-      handleVerify(newDigits.join(''));
     }
   };
 
@@ -57,6 +52,11 @@ export default function OtpVerification({
     if (e.key === 'Backspace' && !digits[index] && index > 0) {
       // Go back to previous box on Backspace
       inputsRef.current[index - 1]?.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (digits.every((d) => d !== '')) {
+        handleVerify(digits.join(''));
+      }
     }
   };
 
@@ -71,13 +71,9 @@ export default function OtpVerification({
     }
     setDigits(newDigits);
 
-    // Focus last entered box
-    const nextIdx = Math.min(pasteData.length, 5);
-    inputsRef.current[nextIdx]?.focus();
-
-    if (pasteData.length === 6) {
-      handleVerify(pasteData);
-    }
+    // Focus the last filled box without auto-submitting
+    const lastFilledIdx = Math.min(pasteData.length - 1, 5);
+    inputsRef.current[Math.max(0, lastFilledIdx)]?.focus();
   };
 
   const handleVerify = async (codeToVerify) => {
@@ -151,7 +147,11 @@ export default function OtpVerification({
               value={digit}
               onChange={(e) => handleDigitChange(idx, e.target.value)}
               onKeyDown={(e) => handleKeyDown(idx, e)}
-              className="h-12 w-10 sm:h-14 sm:w-12 text-center text-xl font-bold rounded-xl border border-line bg-page text-heading shadow-sm focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all mono dark:border-ink"
+              className={`h-12 w-10 sm:h-14 sm:w-12 text-center text-2xl font-bold rounded-xl border-2 transition-all mono outline-none shadow-sm ${
+                digit
+                  ? 'border-primary/80 bg-blue-50/40 text-slate-900 dark:border-primary dark:bg-slate-800 dark:text-white'
+                  : 'border-slate-300 bg-white text-slate-900 dark:border-slate-600 dark:bg-slate-800/90 dark:text-white'
+              } focus:border-primary dark:focus:border-primary focus:ring-2 focus:ring-primary/20`}
             />
           ))}
         </div>

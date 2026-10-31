@@ -19,12 +19,12 @@
 
 ## 👥 Engineering Team — DAXDEV
 
-| Member | Role & Responsibilities | Active Branch |
-| :--- | :--- | :--- |
-| **Prabhat** | **Project Lead & Backend Architecture** (Express.js, MongoDB Atlas, Groq & Gemini Multimodal AI) | [`feat/backend`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/backend) |
-| **Amandeep** | **Frontend Architecture & UI/UX** (React 18, Tailwind CSS, Interactive Cartogram & WebSockets) | [`feat/frontend`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/frontend) |
-| **Pushkar** | **API Verification & Integration** (MCA Registry Validation, Forensic Analyzers & External APIs) | [`feat/verification`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/verification) |
-| **Yuvraj** | **Data Engineering, QA & Presentation** (Datasets, Threat Ledger, Heuristic Testing & QA) | [`feat/data-qa`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/data-qa) |
+| Member | Role & Responsibilities |
+| :--- | :--- |
+| **Prabhat** | **Project Lead & Backend Architecture** (Express.js, MongoDB Atlas, Groq & Gemini Multimodal AI) |
+| **Amandeep** | **Frontend Architecture & UI/UX** (React 18, Tailwind CSS, Interactive Cartogram & WebSockets) |
+| **Pushkar** | **API Verification & Integration** (MCA Registry Validation, Forensic Analyzers & External APIs) |
+| **Yuvraj** | **Data Engineering, QA & Presentation** (Datasets, Threat Ledger, Heuristic Testing & QA) |
 
 ---
 

@@ -523,7 +523,7 @@ app.get('/api/auth/me', (req, res) => {
 // POST /api/auth/google (Google Sign-In / Sign-Up with Permissions)
 app.post('/api/auth/google', async (req, res) => {
   try {
-    const { email, name, avatar, googleId } = req.body;
+    const { email, name, avatar, googleId, phone } = req.body;
     if (!email) {
       return res.status(400).json({ error: 'Google email is required' });
     }
@@ -549,6 +549,7 @@ app.post('/api/auth/google', async (req, res) => {
         email: cleanEmail,
         avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${cleanEmail}`,
         role: cleanEmail.includes('admin') ? 'admin' : 'user',
+        phone: phone || null,
         provider: 'google',
         googleId: googleId || `gid_${Date.now()}`,
         language: 'en',
@@ -571,7 +572,10 @@ app.post('/api/auth/google', async (req, res) => {
     } else {
       if (isMongoConnected) {
         try {
-          await User.updateOne({ email: cleanEmail }, { $set: { avatar, googleId } });
+          await User.updateOne(
+            { email: cleanEmail },
+            { $set: { avatar, googleId, ...(phone ? { phone } : {}) } }
+          );
         } catch (e) {}
       }
     }

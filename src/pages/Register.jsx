@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, UserPlus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import AuthShell from './AuthShell.jsx';
 import Field from '../components/common/Field.jsx';
 import Button from '../components/common/Button.jsx';
@@ -34,13 +35,33 @@ export default function Register() {
 
   const validate = () => {
     const e = {};
-    if (form.name.trim().length < 2) e.name = t('auth.errors.nameRequired');
-    if (!EMAIL_RE.test(form.email)) e.email = t('auth.errors.emailInvalid');
-    if (form.phone && !PHONE_RE.test(form.phone.trim())) e.phone = t('auth.errors.phoneInvalid');
-    if (form.password.length < 8 || !/\d/.test(form.password)) e.password = t('auth.errors.passwordWeak');
-    if (form.confirm !== form.password) e.confirm = t('auth.errors.passwordMismatch');
+    if (!form.name || form.name.trim().length < 2) {
+      e.name = t('auth.errors.nameRequired') || 'Please enter your full name (at least 2 characters).';
+    }
+    if (!form.email || !EMAIL_RE.test(form.email.trim())) {
+      e.email = t('auth.errors.emailInvalid') || 'Please enter a valid email address.';
+    }
+    if (form.phone && form.phone.trim()) {
+      const cleanPhone = form.phone.replace(/\D/g, '');
+      if (cleanPhone.length < 10) {
+        e.phone = 'Please enter a valid 10-digit mobile number.';
+      }
+    }
+    if (!form.password || form.password.length < 8 || !/\d/.test(form.password)) {
+      e.password = t('auth.errors.passwordWeak') || 'Password must be at least 8 characters and include a number.';
+    }
+    if (form.confirm !== form.password) {
+      e.confirm = t('auth.errors.passwordMismatch') || 'Passwords do not match.';
+    }
     setErrors(e);
-    return !Object.keys(e).length;
+    const errKeys = Object.keys(e);
+    if (errKeys.length > 0) {
+      const firstMsg = e[errKeys[0]];
+      setFormError(firstMsg);
+      toast.error(firstMsg);
+      return false;
+    }
+    return true;
   };
 
   const submit = async (ev) => {
@@ -49,21 +70,30 @@ export default function Register() {
     if (!validate()) return;
     setLoading(true);
     try {
-      // eslint-disable-next-line no-unused-vars
-      const { confirm, ...payload } = form;
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone ? form.phone.trim() : null,
+        password: form.password,
+        language: form.language || 'en'
+      };
       const res = await register(payload);
       if (res?.mfaRequired) {
         setMfaData({
-          email: res.email || form.email
+          email: res.email || payload.email
         });
+        toast.success('Verification code sent to your email!');
         return;
       }
       setLang(form.language, { persistToProfile: false });
+      toast.success('Account created successfully!');
       navigate('/dashboard', { replace: true });
     } catch (err) {
       const serverErr = err.response?.data?.error;
       const code = err.response?.data?.message;
-      setFormError(serverErr || (code ? t(`auth.errors.${code}`) : t('auth.errors.generic')));
+      const msg = serverErr || (code ? t(`auth.errors.${code}`) : t('auth.errors.generic'));
+      setFormError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

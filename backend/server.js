@@ -47,11 +47,43 @@ let inMemoryScans = [];
 const MONGO_URI = process.env.MONGO_URI;
 let isMongoConnected = false;
 
+async function seedDefaultUsers() {
+  try {
+    const adminExists = await User.findOne({ email: 'admin@trustmatrix.in' });
+    if (!adminExists) {
+      await User.create({
+        name: 'CyberShield Officer',
+        email: 'admin@trustmatrix.in',
+        password: 'Admin@123',
+        role: 'admin',
+        provider: 'local',
+        createdAt: new Date()
+      });
+      console.log('✅ [DB Seeder] Admin user seeded in MongoDB (admin@trustmatrix.in)');
+    }
+    const demoUserExists = await User.findOne({ email: 'user@trustmatrix.in' });
+    if (!demoUserExists) {
+      await User.create({
+        name: 'Prabhat Sharma',
+        email: 'user@trustmatrix.in',
+        password: 'User@123',
+        role: 'user',
+        provider: 'local',
+        createdAt: new Date()
+      });
+      console.log('✅ [DB Seeder] Demo user seeded in MongoDB (user@trustmatrix.in)');
+    }
+  } catch (err) {
+    console.warn('⚠️ [DB Seeder] Failed to seed default users:', err.message);
+  }
+}
+
 if (MONGO_URI && !MONGO_URI.includes("YOUR_PASSWORD")) {
   mongoose.connect(MONGO_URI)
-    .then(() => {
+    .then(async () => {
       isMongoConnected = true;
       console.log("✅ [MongoDB Atlas] Connected successfully to cybershield_db");
+      await seedDefaultUsers();
     })
     .catch((err) => {
       console.warn("⚠️ [MongoDB Atlas] Could not connect, running in memory-mode:", err.message);
@@ -464,7 +496,7 @@ app.post('/api/auth/google', async (req, res) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    let user = MEMORY_USERS.get(cleanEmail);
+    let user = null;
 
     if (isMongoConnected) {
       try {
@@ -474,10 +506,12 @@ app.post('/api/auth/google', async (req, res) => {
         console.warn('MongoDB user lookup error:', err.message);
       }
     }
+    if (!user) {
+      user = MEMORY_USERS.get(cleanEmail);
+    }
 
     if (!user) {
-      user = {
-        id: `u_g_${Date.now()}`,
+      const newUserData = {
         name: name || cleanEmail.split('@')[0],
         email: cleanEmail,
         avatar: avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${cleanEmail}`,
@@ -485,16 +519,27 @@ app.post('/api/auth/google', async (req, res) => {
         provider: 'google',
         googleId: googleId || `gid_${Date.now()}`,
         language: 'en',
-        createdAt: new Date().toISOString()
+        createdAt: new Date()
       };
-      MEMORY_USERS.set(cleanEmail, user);
 
       if (isMongoConnected) {
         try {
-          await User.create(user);
+          const dbCreated = await User.create(newUserData);
+          user = dbCreated.toObject();
+          console.log(`✅ [MongoDB Atlas] New Google user stored in database: ${cleanEmail}`);
         } catch (e) {
           console.warn('MongoDB user create error:', e.message);
+          user = { id: `u_g_${Date.now()}`, ...newUserData };
         }
+      } else {
+        user = { id: `u_g_${Date.now()}`, ...newUserData };
+      }
+      MEMORY_USERS.set(cleanEmail, user);
+    } else {
+      if (isMongoConnected) {
+        try {
+          await User.updateOne({ email: cleanEmail }, { $set: { avatar, googleId } });
+        } catch (e) {}
       }
     }
 
@@ -507,7 +552,7 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
-// POST /api/auth/login (Email + Password -> Triggers Email MFA OTP)
+// POST /api/auth/login (Email + Password -> Triggers Email MFA OTP ONLY IF REGISTERED IN DB)
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -516,35 +561,38 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
-    let user = MEMORY_USERS.get(cleanEmail);
+    let user = null;
 
     if (isMongoConnected) {
       try {
         const dbUser = await User.findOne({ email: cleanEmail });
         if (dbUser) user = dbUser.toObject();
-      } catch (e) {}
+      } catch (e) {
+        console.warn('MongoDB lookup error in login:', e.message);
+      }
+    }
+    if (!user) {
+      user = MEMORY_USERS.get(cleanEmail);
     }
 
-    // Demo/Auto-fallback for fast hackathon judging
+    // REQUIRE USER TO BE REGISTERED IN DATABASE
     if (!user) {
-      user = {
-        id: `u_${Date.now()}`,
-        name: cleanEmail.split('@')[0],
-        email: cleanEmail,
-        password: password,
-        role: cleanEmail.includes('admin') ? 'admin' : 'user',
-        provider: 'local',
-        createdAt: new Date().toISOString()
-      };
-      MEMORY_USERS.set(cleanEmail, user);
-    } else if (user.password && user.password !== password && password !== 'Admin@123' && password !== 'User@123') {
+      console.log(`⚠️ [Login Rejected] Email not registered in database: ${cleanEmail}`);
+      return res.status(404).json({
+        message: 'accountNotFound',
+        error: 'No account found with this email. Please register or sign up first.'
+      });
+    }
+
+    // Verify Password
+    if (user.password && user.password !== password && password !== 'Admin@123' && password !== 'User@123') {
       return res.status(401).json({ message: 'invalidCredentials', error: 'Invalid email or password' });
     }
 
     // Dispatch MFA OTP to email
     const otpResult = await sendOtp(cleanEmail, 'mfa', { user });
 
-    console.log(`🛡️ [MFA Security] Login MFA triggered for ${cleanEmail}. Waiting for 6-digit OTP...`);
+    console.log(`🛡️ [MFA Security] Login MFA triggered for registered user ${cleanEmail}. Waiting for 6-digit OTP...`);
     res.json({
       mfaRequired: true,
       email: cleanEmail,
@@ -566,6 +614,24 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
+
+    // Check if user already exists in DB
+    let existingUser = null;
+    if (isMongoConnected) {
+      try {
+        existingUser = await User.findOne({ email: cleanEmail });
+      } catch (err) {}
+    }
+    if (!existingUser) {
+      existingUser = MEMORY_USERS.get(cleanEmail);
+    }
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: 'accountExists',
+        error: 'An account with this email is already registered. Please log in instead.'
+      });
+    }
 
     // Dispatch Registration Confirmation OTP
     const otpResult = await sendOtp(cleanEmail, 'register', {
@@ -589,7 +655,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// POST /api/auth/verify-otp (Verifies MFA or Registration OTP)
+// POST /api/auth/verify-otp (Verifies MFA or Registration OTP and saves to DB)
 app.post('/api/auth/verify-otp', async (req, res) => {
   try {
     const { email, otp, purpose } = req.body;
@@ -606,33 +672,45 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 
     let user = null;
     if (purpose === 'register' && result.payload) {
-      user = {
-        id: `u_${Date.now()}`,
+      const newUserData = {
         name: result.payload.name,
         email: cleanEmail,
         password: result.payload.password,
-        phone: result.payload.phone,
+        phone: result.payload.phone || null,
         language: result.payload.language || 'en',
         role: cleanEmail.includes('admin') ? 'admin' : 'user',
         provider: 'local',
-        createdAt: new Date().toISOString()
+        createdAt: new Date()
       };
-      MEMORY_USERS.set(cleanEmail, user);
 
       if (isMongoConnected) {
         try {
-          await User.create(user);
+          const dbCreated = await User.create(newUserData);
+          user = dbCreated.toObject();
+          console.log(`✅ [MongoDB Atlas] New user registered and stored in database: ${cleanEmail}`);
         } catch (e) {
           console.warn('MongoDB user create error:', e.message);
+          user = { id: `u_${Date.now()}`, ...newUserData };
         }
+      } else {
+        user = { id: `u_${Date.now()}`, ...newUserData };
       }
+      MEMORY_USERS.set(cleanEmail, user);
     } else {
-      user = result.payload?.user || MEMORY_USERS.get(cleanEmail) || {
-        id: `u_${Date.now()}`,
-        name: cleanEmail.split('@')[0],
-        email: cleanEmail,
-        role: cleanEmail.includes('admin') ? 'admin' : 'user'
-      };
+      if (isMongoConnected) {
+        try {
+          const dbUser = await User.findOne({ email: cleanEmail });
+          if (dbUser) user = dbUser.toObject();
+        } catch (e) {}
+      }
+      if (!user) {
+        user = result.payload?.user || MEMORY_USERS.get(cleanEmail) || {
+          id: `u_${Date.now()}`,
+          name: cleanEmail.split('@')[0],
+          email: cleanEmail,
+          role: cleanEmail.includes('admin') ? 'admin' : 'user'
+        };
+      }
     }
 
     currentSessionUser = user;
@@ -661,13 +739,34 @@ app.post('/api/auth/resend-otp', async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password (Dispatches Password Reset OTP)
+// POST /api/auth/forgot-password (Dispatches Password Reset OTP ONLY IF USER IS IN DATABASE)
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     const cleanEmail = email.toLowerCase().trim();
+
+    // Verify user exists in DB before sending OTP
+    let user = null;
+    if (isMongoConnected) {
+      try {
+        const dbUser = await User.findOne({ email: cleanEmail });
+        if (dbUser) user = dbUser.toObject();
+      } catch (err) {}
+    }
+    if (!user) {
+      user = MEMORY_USERS.get(cleanEmail);
+    }
+
+    if (!user) {
+      console.log(`⚠️ [Forgot Password Rejected] Email not registered in database: ${cleanEmail}`);
+      return res.status(404).json({
+        message: 'accountNotFound',
+        error: 'No account registered with this email. Please register or sign up first.'
+      });
+    }
+
     const otpResult = await sendOtp(cleanEmail, 'reset_password');
 
     console.log(`🔑 [Password Reset] Reset code sent to ${cleanEmail}`);
@@ -683,7 +782,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-// POST /api/auth/reset-password (Verifies OTP & Updates Password)
+// POST /api/auth/reset-password (Verifies OTP & Updates Password in DB)
 app.post('/api/auth/reset-password', async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
@@ -701,22 +800,15 @@ app.post('/api/auth/reset-password', async (req, res) => {
     let user = MEMORY_USERS.get(cleanEmail);
     if (user) {
       user.password = newPassword;
-    } else {
-      user = {
-        id: `u_${Date.now()}`,
-        name: cleanEmail.split('@')[0],
-        email: cleanEmail,
-        password: newPassword,
-        role: 'user',
-        provider: 'local'
-      };
-      MEMORY_USERS.set(cleanEmail, user);
     }
 
     if (isMongoConnected) {
       try {
         await User.updateOne({ email: cleanEmail }, { $set: { password: newPassword } });
-      } catch (e) {}
+        console.log(`✅ [MongoDB Atlas] Password updated in database for: ${cleanEmail}`);
+      } catch (e) {
+        console.warn('MongoDB password update error:', e.message);
+      }
     }
 
     console.log(`✅ [Password Updated] Password successfully reset for ${cleanEmail}`);
@@ -1082,18 +1174,48 @@ app.get('/api/admin/overview', async (req, res) => {
   }
 });
 
-app.get('/api/admin/users', (req, res) => {
-  const q = (req.query.q || '').toLowerCase();
-  const page = parseInt(req.query.page) || 1;
-  const limit = 10;
-  let filtered = adminUsersList.filter(u => `${u.name} ${u.email} ${u.state}`.toLowerCase().includes(q));
-  res.json({
-    items: filtered.slice((page - 1) * limit, page * limit),
-    page,
-    pages: Math.max(1, Math.ceil(filtered.length / limit)),
-    total: filtered.length,
-    hasMore: page * limit < filtered.length
-  });
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    const q = (req.query.q || '').toLowerCase();
+    const page = parseInt(req.query.page) || 1;
+    const limit = 10;
+
+    let usersList = [];
+    if (isMongoConnected) {
+      try {
+        const dbUsers = await User.find({}).sort({ createdAt: -1 });
+        usersList = dbUsers.map((u) => ({
+          id: u._id.toString(),
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '+91 98000 00000',
+          role: u.role || 'user',
+          state: 'Online',
+          scans: 0,
+          blocked: false,
+          provider: u.provider || 'local',
+          createdAt: u.createdAt ? u.createdAt.toISOString() : new Date().toISOString()
+        }));
+      } catch (err) {
+        console.warn('MongoDB admin users fetch error:', err.message);
+      }
+    }
+
+    if (usersList.length === 0) {
+      usersList = adminUsersList;
+    }
+
+    let filtered = usersList.filter(u => `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(q));
+    res.json({
+      items: filtered.slice((page - 1) * limit, page * limit),
+      page,
+      pages: Math.max(1, Math.ceil(filtered.length / limit)),
+      total: filtered.length,
+      hasMore: page * limit < filtered.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
 });
 
 app.patch('/api/admin/users/:id', (req, res) => {

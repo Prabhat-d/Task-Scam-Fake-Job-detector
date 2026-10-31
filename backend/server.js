@@ -516,8 +516,32 @@ let currentSessionUser = null;
 
 // GET /api/auth/me
 app.get('/api/auth/me', (req, res) => {
-  const user = currentSessionUser || MEMORY_USERS.get('admin@trustmatrix.in');
-  res.json({ user: sanitizeUser(user) });
+  if (!currentSessionUser) {
+    return res.status(401).json({ error: 'Not authenticated', user: null });
+  }
+  res.json({ user: sanitizeUser(currentSessionUser) });
+});
+
+// PATCH /api/users/me (Updates current session user profile/preferences)
+app.patch('/api/users/me', async (req, res) => {
+  if (!currentSessionUser) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  try {
+    const patch = req.body || {};
+    const allowed = ['name', 'phone', 'language', 'theme', 'avatar'];
+    const update = {};
+    for (const key of allowed) {
+      if (patch[key] !== undefined) update[key] = patch[key];
+    }
+    if (isMongoConnected) {
+      await User.updateOne({ email: currentSessionUser.email }, { $set: update });
+    }
+    currentSessionUser = { ...currentSessionUser, ...update };
+    res.json({ user: sanitizeUser(currentSessionUser) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
 });
 
 // POST /api/auth/google (Google Sign-In / Sign-Up with Permissions)
@@ -644,7 +668,22 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'invalidCredentials', error: 'Invalid email or password' });
     }
 
-    // Dispatch MFA OTP to email
+    // Check if the user is an admin
+    const isAdminUser = user.role === 'admin' || cleanEmail === 'admin@trustmatrix.in';
+
+    if (isAdminUser) {
+      // Remove MFA strictly for admin: direct login with verified credentials
+      currentSessionUser = user;
+      console.log(`👑 [Admin Direct Login] Admin authenticated successfully without MFA: ${cleanEmail}`);
+      return res.json({
+        success: true,
+        mfaRequired: false,
+        user: sanitizeUser(user),
+        message: 'Admin authenticated successfully'
+      });
+    }
+
+    // Dispatch MFA OTP to email for normal users
     const otpResult = await sendOtp(cleanEmail, 'mfa', { user });
 
     console.log(`🛡️ [MFA Security] Login MFA triggered for registered user ${cleanEmail}. Waiting for 6-digit OTP...`);

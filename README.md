@@ -17,6 +17,17 @@
 
 ---
 
+## 👥 Engineering Team — DAXDEV
+
+| Member | Role & Responsibilities | Active Branch |
+| :--- | :--- | :--- |
+| **Prabhat** | **Project Lead & Backend Architecture** (Express.js, MongoDB Atlas, Groq & Gemini Multimodal AI) | [`feat/backend`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/backend) |
+| **Amandeep** | **Frontend Architecture & UI/UX** (React 18, Tailwind CSS, Interactive Cartogram & WebSockets) | [`feat/frontend`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/frontend) |
+| **Pushkar** | **API Verification & Integration** (MCA Registry Validation, Forensic Analyzers & External APIs) | [`feat/verification`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/verification) |
+| **Yuvraj** | **Data Engineering, QA & Presentation** (Datasets, Threat Ledger, Heuristic Testing & QA) | [`feat/data-qa`](https://github.com/Prabhat-d/Task-Scam-Fake-Job-detector/tree/feat/data-qa) |
+
+---
+
 ## 📌 Executive Overview
 
 **TrustMatrix** is a comprehensive cybersecurity and threat intelligence platform engineered to detect, deconstruct, and neutralize modern cyber employment scams. Combining multi-modal AI heuristics, official regulatory verification, and real-time forensic entity extraction, TrustMatrix protects users from sophisticated social engineering campaigns—ranging from fake freelance task scams on Telegram and WhatsApp to forged corporate appointment letters.
@@ -71,34 +82,34 @@ The system empowers both end users and law enforcement agencies by translating c
 
 ```mermaid
 flowchart TD
-    User["👤 End User / Enterprise Client"]
-    Web["🖥️ Web Client (React 18 + TailwindCSS + Zustand)"]
+    User["👤 End User / Client Application"]
+    Web["🖥️ Web Client (React 18 + Tailwind CSS)"]
     API["⚡ API Gateway & Server (Node.js + Express)"]
     Socket["🔄 Real-Time Event Hub (Socket.IO)"]
     DB[("🗄️ Primary Store (MongoDB Atlas)")]
-    
-    subgraph Intelligence ["Intelligence Engine"]
-        AI1["🧠 Google Gemini Multimodal Vision"]
-        AI2["⚡ Groq LPU Inference (Llama 3 70B/8B)"]
-        MCA["🏛️ MCA Registry & Domain Verifier"]
-    end
-    
-    subgraph Security ["Security & Access Control"]
+
+    subgraph Security["Identity & Security Pipeline"]
         OAuth["🔑 Google OAuth 2.0"]
-        Bcrypt["🔒 Salted Bcrypt (10 Rounds)"]
-        OTP["📬 Cryptographic MFA OTP Service"]
+        Bcrypt["🔒 Salted Bcrypt Hashing (10 Rounds)"]
+        OTP["📬 MFA OTP Engine"]
     end
 
-    User <--> Web
-    Web <--> API
+    subgraph Intelligence["Threat Intelligence & Verification"]
+        Gemini["🧠 Google Gemini Multimodal Vision"]
+        Groq["⚡ Groq LPU Inference (Llama 3)"]
+        MCA["🏛️ MCA Registry & CIN Verifier"]
+    end
+
+    User --> Web
+    Web --> API
     Web <--> Socket
     API <--> Socket
-    API <--> DB
+    API --> DB
     API --> OAuth
     API --> Bcrypt
     API --> OTP
-    API --> AI1
-    API --> AI2
+    API --> Gemini
+    API --> Groq
     API --> MCA
 ```
 

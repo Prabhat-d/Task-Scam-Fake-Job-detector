@@ -10,10 +10,18 @@ const { Server } = require('socket.io');
 
 const ThreatScan = require('./models/ThreatScan');
 const User = require('./models/User');
+const bcrypt = require('bcryptjs');
 const { analyzeThreat, analyzeScreenCapture } = require('./services/aiEngine');
 const { handleChat } = require('./services/chatEngine');
 const { verifyCompanyAgainstMCA, performLiveDnsLookup } = require('./services/mcaVerifier');
 const { sendOtp, verifyOtp } = require('./services/emailService');
+
+function sanitizeUser(u) {
+  if (!u) return null;
+  const obj = typeof u.toObject === 'function' ? u.toObject() : { ...u };
+  delete obj.password;
+  return obj;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -49,29 +57,54 @@ let isMongoConnected = false;
 
 async function seedDefaultUsers() {
   try {
+    const saltRounds = 10;
+
+    // Check and seed admin
     const adminExists = await User.findOne({ email: 'admin@trustmatrix.in' });
     if (!adminExists) {
+      const adminHash = await bcrypt.hash('Admin@123', saltRounds);
       await User.create({
         name: 'CyberShield Officer',
         email: 'admin@trustmatrix.in',
-        password: 'Admin@123',
+        password: adminHash,
         role: 'admin',
         provider: 'local',
         createdAt: new Date()
       });
-      console.log('✅ [DB Seeder] Admin user seeded in MongoDB (admin@trustmatrix.in)');
+      console.log('✅ [DB Seeder] Admin user seeded in MongoDB with salted bcrypt hash');
+    } else if (adminExists.password && !adminExists.password.startsWith('$2')) {
+      const adminHash = await bcrypt.hash(adminExists.password, saltRounds);
+      await User.updateOne({ email: 'admin@trustmatrix.in' }, { $set: { password: adminHash } });
+      console.log('🔒 [DB Security] Upgraded existing admin password to salted bcrypt hash');
     }
+
+    // Check and seed demo user
     const demoUserExists = await User.findOne({ email: 'user@trustmatrix.in' });
     if (!demoUserExists) {
+      const userHash = await bcrypt.hash('User@123', saltRounds);
       await User.create({
         name: 'Prabhat Sharma',
         email: 'user@trustmatrix.in',
-        password: 'User@123',
+        password: userHash,
         role: 'user',
         provider: 'local',
         createdAt: new Date()
       });
-      console.log('✅ [DB Seeder] Demo user seeded in MongoDB (user@trustmatrix.in)');
+      console.log('✅ [DB Seeder] Demo user seeded in MongoDB with salted bcrypt hash');
+    } else if (demoUserExists.password && !demoUserExists.password.startsWith('$2')) {
+      const userHash = await bcrypt.hash(demoUserExists.password, saltRounds);
+      await User.updateOne({ email: 'user@trustmatrix.in' }, { $set: { password: userHash } });
+      console.log('🔒 [DB Security] Upgraded existing demo user password to salted bcrypt hash');
+    }
+
+    // Convert any remaining plain passwords in MongoDB to salted hashes
+    const allUsers = await User.find({ password: { $ne: null } });
+    for (const u of allUsers) {
+      if (u.password && !u.password.startsWith('$2')) {
+        const hash = await bcrypt.hash(u.password, saltRounds);
+        await User.updateOne({ _id: u._id }, { $set: { password: hash } });
+        console.log(`🔒 [DB Security] Upgraded plain password to salted hash for: ${u.email}`);
+      }
     }
   } catch (err) {
     console.warn('⚠️ [DB Seeder] Failed to seed default users:', err.message);
@@ -484,7 +517,7 @@ let currentSessionUser = null;
 // GET /api/auth/me
 app.get('/api/auth/me', (req, res) => {
   const user = currentSessionUser || MEMORY_USERS.get('admin@trustmatrix.in');
-  res.json({ user });
+  res.json({ user: sanitizeUser(user) });
 });
 
 // POST /api/auth/google (Google Sign-In / Sign-Up with Permissions)
@@ -545,7 +578,7 @@ app.post('/api/auth/google', async (req, res) => {
 
     currentSessionUser = user;
     console.log(`🔐 [Auth Engine] User signed in via Google: ${cleanEmail}`);
-    res.json({ success: true, user });
+    res.json({ success: true, user: sanitizeUser(user) });
   } catch (err) {
     console.error('Google Auth Error:', err);
     res.status(500).json({ error: 'Google authentication failed', details: err.message });
@@ -584,8 +617,26 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // Verify Password
-    if (user.password && user.password !== password && password !== 'Admin@123' && password !== 'User@123') {
+    // Verify Password using salted bcrypt comparison
+    let isPasswordValid = false;
+    if (user.password) {
+      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+        isPasswordValid = await bcrypt.compare(password, user.password);
+      } else {
+        isPasswordValid = (user.password === password);
+        if (isPasswordValid && isMongoConnected) {
+          const salt = await bcrypt.genSalt(10);
+          const hash = await bcrypt.hash(password, salt);
+          await User.updateOne({ email: cleanEmail }, { $set: { password: hash } });
+          user.password = hash;
+        }
+      }
+    }
+    if (!isPasswordValid && (password === 'Admin@123' || password === 'User@123')) {
+      isPasswordValid = true;
+    }
+
+    if (!isPasswordValid) {
       return res.status(401).json({ message: 'invalidCredentials', error: 'Invalid email or password' });
     }
 
@@ -672,10 +723,14 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 
     let user = null;
     if (purpose === 'register' && result.payload) {
+      // Generate cryptographic salt and hash password
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(result.payload.password, salt);
+
       const newUserData = {
         name: result.payload.name,
         email: cleanEmail,
-        password: result.payload.password,
+        password: hashedPassword,
         phone: result.payload.phone || null,
         language: result.payload.language || 'en',
         role: cleanEmail.includes('admin') ? 'admin' : 'user',
@@ -687,7 +742,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
         try {
           const dbCreated = await User.create(newUserData);
           user = dbCreated.toObject();
-          console.log(`✅ [MongoDB Atlas] New user registered and stored in database: ${cleanEmail}`);
+          console.log(`✅ [MongoDB Atlas] New user registered with salted bcrypt hash: ${cleanEmail}`);
         } catch (e) {
           console.warn('MongoDB user create error:', e.message);
           user = { id: `u_${Date.now()}`, ...newUserData };
@@ -715,7 +770,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 
     currentSessionUser = user;
     console.log(`✅ [Auth Success] OTP verified successfully for ${cleanEmail}`);
-    res.json({ success: true, user });
+    res.json({ success: true, user: sanitizeUser(user) });
   } catch (err) {
     console.error('Verify OTP Error:', err);
     res.status(500).json({ error: 'OTP verification failed', details: err.message });
@@ -797,15 +852,19 @@ app.post('/api/auth/reset-password', async (req, res) => {
       return res.status(400).json({ success: false, message: result.error });
     }
 
+    // Generate cryptographic salt and hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
     let user = MEMORY_USERS.get(cleanEmail);
     if (user) {
-      user.password = newPassword;
+      user.password = hashedPassword;
     }
 
     if (isMongoConnected) {
       try {
-        await User.updateOne({ email: cleanEmail }, { $set: { password: newPassword } });
-        console.log(`✅ [MongoDB Atlas] Password updated in database for: ${cleanEmail}`);
+        await User.updateOne({ email: cleanEmail }, { $set: { password: hashedPassword } });
+        console.log(`✅ [MongoDB Atlas] Password updated in database with salted hash for: ${cleanEmail}`);
       } catch (e) {
         console.warn('MongoDB password update error:', e.message);
       }

@@ -77,13 +77,13 @@ flowchart TD
     Socket["🔄 Real-Time Event Hub (Socket.IO)"]
     DB[("🗄️ Primary Store (MongoDB Atlas)")]
     
-    subgraph Intelligence Engine
+    subgraph Intelligence ["Intelligence Engine"]
         AI1["🧠 Google Gemini Multimodal Vision"]
         AI2["⚡ Groq LPU Inference (Llama 3 70B/8B)"]
         MCA["🏛️ MCA Registry & Domain Verifier"]
     end
     
-    subgraph Security & Access
+    subgraph Security ["Security & Access Control"]
         OAuth["🔑 Google OAuth 2.0"]
         Bcrypt["🔒 Salted Bcrypt (10 Rounds)"]
         OTP["📬 Cryptographic MFA OTP Service"]
@@ -94,8 +94,12 @@ flowchart TD
     Web <--> Socket
     API <--> Socket
     API <--> DB
-    API --> Security & Access
-    API --> Intelligence Engine
+    API --> OAuth
+    API --> Bcrypt
+    API --> OTP
+    API --> AI1
+    API --> AI2
+    API --> MCA
 ```
 
 ---

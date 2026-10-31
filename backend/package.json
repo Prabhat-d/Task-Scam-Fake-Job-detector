@@ -4,6 +4,7 @@
   "description": "Backend engine for CTBF-AI-11 Task-Scam and Fake Job Detector",
   "main": "server.js",
   "scripts": {
+    "build": "echo 'Backend build ready'",
     "start": "node server.js",
     "dev": "node server.js"
   },

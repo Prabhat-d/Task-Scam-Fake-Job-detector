@@ -11,5 +11,8 @@ export const authService = {
   resendOtp: (body) => (USE_MOCK ? { success: true } : data(api.post('/api/auth/resend-otp', body))),
   forgotPassword: (body) => (USE_MOCK ? { success: true } : data(api.post('/api/auth/forgot-password', body))),
   resetPassword: (body) => (USE_MOCK ? { success: true } : data(api.post('/api/auth/reset-password', body))),
-  logout: () => (USE_MOCK ? mock.auth.logout() : data(api.post('/api/auth/logout'))),
+  logout: () => {
+    try { localStorage.removeItem('token'); } catch {}
+    return USE_MOCK ? mock.auth.logout() : data(api.post('/api/auth/logout'));
+  },
 };

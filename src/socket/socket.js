@@ -19,12 +19,17 @@ export function connectSocket() {
     ? createMockSocket()
     : io(SOCKET_URL, {
         withCredentials: true,
-        autoConnect: true,
-        transports: ['polling', 'websocket'],
+        autoConnect: false,
+        transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 1000,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 10000,
+        timeout: 10000,
       });
+  if (!USE_MOCK) {
+    socket.connect();
+  }
   return socket;
 }
 

@@ -58,7 +58,7 @@ export default function Dashboard() {
     });
     items.forEach((s) => {
       const row = days.find((d) => d.key === new Date(s.createdAt).toDateString());
-      if (row) row[s.verdict] += 1;
+      if (row && typeof row[s.verdict] === 'number') row[s.verdict] += 1;
     });
     return days;
   }, [items]);
@@ -113,10 +113,16 @@ export default function Dashboard() {
                 {items.slice(0, 5).map((s) => (
                   <li key={s.id}>
                     <Link to={`/result/${s.id}`} className="flex items-center gap-3 rounded-lg p-2 hover:bg-page dark:hover:bg-navy transition-colors">
-                      <img src={s.thumbnail} alt="" className="h-12 w-10 rounded-md object-cover border divider bg-white shrink-0" />
+                      {s.thumbnail ? (
+                        <img src={s.thumbnail} alt="" className="h-12 w-10 rounded-md object-cover border divider bg-white shrink-0" />
+                      ) : (
+                        <div className="h-12 w-10 rounded-md border divider bg-primary/10 flex items-center justify-center shrink-0 text-primary">
+                          <ScanSearch size={20} />
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-heading truncate">{s.title}</p>
-                        <p className="text-xs text-subtle">{t(`types.${s.type}`)} · {timeAgo(s.createdAt, t)}</p>
+                        <p className="text-sm font-medium text-heading truncate">{s.title || s.company?.name || s.category || `Scan #${s.id}`}</p>
+                        <p className="text-xs text-subtle">{t(`types.${s.type || 'job_post'}`)} · {timeAgo(s.createdAt, t)}</p>
                       </div>
                       <VerdictChip verdict={s.verdict} score={s.score} />
                     </Link>

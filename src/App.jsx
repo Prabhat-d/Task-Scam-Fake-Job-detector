@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import AppRoutes from './routes/AppRoutes.jsx';
+import ErrorBoundary from './components/common/ErrorBoundary.jsx';
 import { HelplineFallback } from './components/common/CallHelplineButton.jsx';
 import { useAuthStore } from './store/authStore.js';
 import { useThemeStore } from './store/themeStore.js';
@@ -30,7 +31,7 @@ export default function App() {
 
   const dark = theme === 'dark';
   return (
-    <>
+    <ErrorBoundary>
       <AppRoutes />
       <HelplineFallback />
       <Toaster
@@ -45,6 +46,6 @@ export default function App() {
           },
         }}
       />
-    </>
+    </ErrorBoundary>
   );
 }

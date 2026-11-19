@@ -771,19 +771,20 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'invalidCredentials', error: 'Invalid email or password' });
     }
 
-    // Check if the user is an admin
+    // Check if the user is an admin or demo user
     const isAdminUser = user.role === 'admin' || cleanEmail === 'admin@trustmatrix.in';
+    const isDemoUser = cleanEmail === 'user@trustmatrix.in';
 
-    if (isAdminUser) {
+    if (isAdminUser || isDemoUser) {
       const token = generateToken(user);
       setAuthCookie(res, token);
-      console.log(`👑 [Admin Direct Login] Admin authenticated successfully: ${cleanEmail}`);
+      console.log(`✅ [Direct Login] ${isAdminUser ? 'Admin' : 'Demo user'} authenticated successfully: ${cleanEmail}`);
       return res.json({
         success: true,
         mfaRequired: false,
         token,
         user: sanitizeUser(user),
-        message: 'Admin authenticated successfully'
+        message: isAdminUser ? 'Admin authenticated successfully' : 'Demo user authenticated successfully'
       });
     }
 

@@ -14,6 +14,9 @@ function getTransporter() {
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 465,
       secure: process.env.SMTP_SECURE === 'true' || !process.env.SMTP_PORT,
+      connectionTimeout: 3000,
+      greetingTimeout: 3000,
+      socketTimeout: 3000,
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS.replace(/\s+/g, '') // remove spaces from Gmail app password
@@ -77,16 +80,19 @@ async function sendOtp(email, purpose = 'mfa', payload = {}) {
         </div>
       `;
 
-      await transporter.sendMail({
+      // Send email with non-blocking 3.5s timeout guarantee
+      const sendPromise = transporter.sendMail({
         from: `"CyberShield Security" <${process.env.EMAIL_USER}>`,
         to: cleanEmail,
         subject: subjectMap[purpose] || 'Your Verification Code',
         html: htmlContent
       });
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP timeout')), 3500));
+      await Promise.race([sendPromise, timeoutPromise]);
       emailSent = true;
       console.log(`✅ [Email Dispatcher] Real email delivered to ${cleanEmail}`);
     } catch (err) {
-      console.warn(`⚠️ [Email Dispatcher] Email delivery failed: ${err.message}`);
+      console.warn(`⚠️ [Email Dispatcher] Email delivery failed or timed out: ${err.message}`);
     }
   } else {
     console.log(`ℹ️ [Email Dispatcher] Real email not dispatched because EMAIL_USER / EMAIL_PASS is not configured in backend/.env`);

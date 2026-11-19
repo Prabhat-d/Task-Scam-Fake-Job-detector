@@ -128,7 +128,10 @@ async function performLiveDnsLookup(domain) {
   const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].trim().toLowerCase();
 
   try {
-    const mxRecords = await dns.resolveMx(cleanDomain);
+    const mxRecords = await Promise.race([
+      dns.resolveMx(cleanDomain),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('DNS lookup timeout')), 3000))
+    ]);
     return {
       hasMx: mxRecords && mxRecords.length > 0,
       mxServers: mxRecords ? mxRecords.map(r => r.exchange) : [],

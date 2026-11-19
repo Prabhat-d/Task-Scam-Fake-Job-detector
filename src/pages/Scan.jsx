@@ -83,10 +83,22 @@ export default function Scan() {
     setSubmitting(true);
     setProgress(files.length ? 0 : null);
     try {
-      const { scanId } = await scansService.create({ ...form, files }, files.length ? setProgress : undefined);
-      navigate(`/scan/${scanId}/processing`);
+      const res = await scansService.create({ ...form, files }, files.length ? setProgress : undefined);
+      const scanId = res?.scanId || res?.id;
+      if (scanId) {
+        navigate(`/scan/${scanId}/processing`);
+      } else {
+        throw new Error('Scan created but no scanId returned');
+      }
     } catch (err) {
-      toast.error(err.response?.data?.message || t('scan.errors.failed'));
+      console.error('Scan submission error:', err);
+      const errMsg =
+        err.response?.data?.details ||
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.code === 'ECONNABORTED' ? 'Scan timed out while analyzing. Please try again.' : err.message) ||
+        t('scan.errors.failed');
+      toast.error(errMsg);
       setProgress(null);
     } finally {
       setSubmitting(false);

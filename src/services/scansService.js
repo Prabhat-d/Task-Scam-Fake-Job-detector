@@ -13,6 +13,7 @@ export const scansService = {
     ['text', 'link', 'companyName', 'hrEmail', 'amountPaid'].forEach((k) => input[k] && fd.append(k, input[k]));
     return data(
       api.post('/api/scans', fd, {
+        timeout: 90000,
         onUploadProgress: (e) => e.total && onUploadProgress?.(Math.round((e.loaded / e.total) * 100)),
       })
     );

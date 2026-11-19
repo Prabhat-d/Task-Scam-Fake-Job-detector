@@ -93,31 +93,33 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       };
 
       const callGeminiWithFallback = async (parts) => {
-        const models = ["gemini-3.5-flash-lite", "gemini-3.8-flash"];
+        const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
         let lastErr = null;
         for (const model of models) {
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              return await ai.models.generateContent({
-                model,
-                contents: parts,
-                config: { responseMimeType: "application/json" }
-              });
-            } catch (e) {
-              lastErr = e;
-              // Brief backoff before retry for transient 503 spikes
-              await new Promise(r => setTimeout(r, 600));
-            }
+          try {
+            return await ai.models.generateContent({
+              model,
+              contents: parts,
+              config: { responseMimeType: "application/json" }
+            });
+          } catch (e) {
+            lastErr = e;
           }
         }
         throw lastErr;
       };
 
-      // Run BOTH models in parallel with automatic model fallback
-      const [resModelA, resModelB] = await Promise.all([
+      const withTimeout = (promise, ms = 12000) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`AI generation timed out after ${ms}ms`)), ms))
+        ]);
+
+      // Run BOTH models in parallel with automatic model fallback & 12s overall timeout
+      const [resModelA, resModelB] = await withTimeout(Promise.all([
         callGeminiWithFallback(buildParts(PATTERN_EXTRACTION_PROMPT)),
         callGeminiWithFallback(buildParts(BEHAVIORAL_PREDICTION_PROMPT))
-      ]);
+      ]), 12000);
 
       const parsedA = JSON.parse(resModelA.text);
       const parsedB = JSON.parse(resModelB.text);
@@ -324,7 +326,7 @@ async function analyzeScreenCapture(imageBuffer, mimeType = "image/jpeg", apiKey
         }
       ];
 
-      const models = ["gemini-3.5-flash-lite", "gemini-3.8-flash"];
+      const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
       let response = null;
       let lastErr = null;
 

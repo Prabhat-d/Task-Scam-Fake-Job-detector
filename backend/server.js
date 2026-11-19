@@ -208,15 +208,37 @@ function adaptScanForFrontend(savedRecord, files = []) {
     pa: `ਜੋਖਮ ਸਕੋਰ ${savedRecord.riskScore}/100 ਦੇ ਨਾਲ ਵਿਸ਼ਲੇਸ਼ਣ ਪੂਰਾ ਹੋਇਆ।`
   };
 
-  const nextMove = savedRecord.scamStage?.nextPredictedAction ? {
-    en: savedRecord.scamStage.nextPredictedAction,
-    hi: savedRecord.scamStage.nextPredictedAction,
-    pa: savedRecord.scamStage.nextPredictedAction
-  } : (verdict === 'scam' ? {
-    en: "Stop all payments immediately. Do not communicate further and dial 1930.",
-    hi: "तुरंत सभी भुगतान रोकें। आगे बात न करें और 1930 डायल करें।",
-    pa: "ਤੁਰੰਤ ਸਾਰੇ ਭੁਗਤਾਨ ਰੋਕੋ। ਅੱਗੇ ਗੱਲ ਨਾ ਕਰੋ ਅਤੇ 1930 ਡਾਇਲ ਕਰੋ।"
-  } : null);
+  const STAGE_NEXT_MOVES = {
+    task: [
+      "Next they will pay you a small real amount (₹150–₹500) into your UPI to win your trust. Do not fall for it — it is bait.",
+      "Next they will move you to a private Telegram/WhatsApp VIP group with fake members to build trust. Do not join.",
+      "Next they will ask you to deposit money into a merchant UPI for a 'prepaid task' or 'crypto rating'. Do not pay.",
+      "Next they will say your account is frozen with a 'combo task' and demand a bigger deposit to unlock it. Do not pay.",
+      "Next they will ask you to pay a 18% 'tax', 'GST', or 'AML fee' to withdraw your dummy funds. Do not pay.",
+      "They will keep inventing fees until you stop paying, then block you. Stop all contact and call 1930 immediately."
+    ],
+    job: [
+      "Next they will ask for a registration fee, medical test charge, or laptop insurance deposit. Real companies never charge candidates.",
+      "Next they will send a fake appointment letter with forged seals and ask for document verification fees.",
+      "Next they will demand urgent bank transfers via UPI to personal accounts, claiming limited joining slots.",
+      "Next they will claim the payment failed or courier fee is pending, demanding duplicate transfer.",
+      "Next they will cut off communication once fees are transferred and switch to a new phone number.",
+      "Stop all contact immediately and dial 1930."
+    ]
+  };
+
+  const stageIndex = Math.max(0, Math.min(typeof stage === 'number' ? stage : 0, 5));
+  const fallbackStagePrediction = (STAGE_NEXT_MOVES[track] || STAGE_NEXT_MOVES.task)[stageIndex];
+
+  const predictedText = savedRecord.threatIntelligence?.predictedNextMove || 
+                        savedRecord.scamStage?.nextPredictedAction || 
+                        (verdict === 'scam' ? fallbackStagePrediction : null);
+
+  const nextMove = predictedText ? {
+    en: predictedText,
+    hi: predictedText,
+    pa: predictedText
+  } : null;
 
   const scanId = savedRecord.scanId || (savedRecord._id ? savedRecord._id.toString() : `scn_${Date.now()}`);
 

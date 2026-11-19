@@ -1,7 +1,44 @@
 const dns = require('dns').promises;
+const path = require('path');
+const fs = require('fs');
 
-// Official Indian Corporate Registry Mirror (Real CINs & Verified Corporate Domains)
-const MCA_OFFICIAL_REGISTRY = {
+// Load comprehensive 1,000+ verified corporate registry dataset
+let TOP_COMPANIES = [];
+const aliasIndex = new Map();
+const domainIndex = new Map();
+
+try {
+  const dataPath = path.join(__dirname, '../data/topCompanies.json');
+  if (fs.existsSync(dataPath)) {
+    const raw = fs.readFileSync(dataPath, 'utf-8');
+    TOP_COMPANIES = JSON.parse(raw);
+
+    for (const comp of TOP_COMPANIES) {
+      // Index by full name
+      aliasIndex.set(comp.fullName.toLowerCase().trim(), comp);
+
+      // Index by aliases
+      if (Array.isArray(comp.aliases)) {
+        for (const alias of comp.aliases) {
+          aliasIndex.set(alias.toLowerCase().trim(), comp);
+        }
+      }
+
+      // Index by domains
+      if (Array.isArray(comp.officialDomains)) {
+        for (const dom of comp.officialDomains) {
+          domainIndex.set(dom.toLowerCase().trim(), comp);
+        }
+      }
+    }
+    console.log(`🏛️ [MCA Verifier] Loaded ${TOP_COMPANIES.length} verified companies into corporate registry index.`);
+  }
+} catch (err) {
+  console.warn('⚠️ [MCA Verifier] Failed to load topCompanies.json, falling back to core registry:', err.message);
+}
+
+// Fallback core registry if JSON is not loaded
+const CORE_REGISTRY = {
   "infosys": {
     cin: "L85110KA1981PLC013115",
     officialDomains: ["infosys.com"],
@@ -16,24 +53,17 @@ const MCA_OFFICIAL_REGISTRY = {
     roc: "RoC-Mumbai",
     status: "Active"
   },
-  "tata consultancy services": {
-    cin: "L22210MH1995PLC084781",
-    officialDomains: ["tcs.com"],
-    fullName: "Tata Consultancy Services Limited",
-    roc: "RoC-Mumbai",
+  "wipro": {
+    cin: "L32102KA1945PLC020800",
+    officialDomains: ["wipro.com"],
+    fullName: "Wipro Limited",
+    roc: "RoC-Bangalore",
     status: "Active"
   },
   "amazon": {
     cin: "U51100KA2012PTC064971",
     officialDomains: ["amazon.com", "amazon.in"],
     fullName: "Amazon Development Centre (India) Pvt Ltd",
-    roc: "RoC-Bangalore",
-    status: "Active"
-  },
-  "wipro": {
-    cin: "L32102KA1945PLC020800",
-    officialDomains: ["wipro.com"],
-    fullName: "Wipro Limited",
     roc: "RoC-Bangalore",
     status: "Active"
   },
@@ -44,31 +74,45 @@ const MCA_OFFICIAL_REGISTRY = {
     roc: "RoC-Bangalore",
     status: "Active"
   },
-  "flipkart": {
-    cin: "U51109KA2012PTC066107",
-    officialDomains: ["flipkart.com"],
-    fullName: "Flipkart Internet Private Limited",
-    roc: "RoC-Bangalore",
-    status: "Active"
-  },
-  "hcl": {
-    cin: "L74140DL1991PLC046369",
-    officialDomains: ["hcltech.com", "hcl.com"],
-    fullName: "HCL Technologies Limited",
+  "microsoft": {
+    cin: "U72900DL1988PTC033183",
+    officialDomains: ["microsoft.com"],
+    fullName: "Microsoft Corporation (India) Private Limited",
     roc: "RoC-Delhi",
     status: "Active"
   },
-  "tech mahindra": {
-    cin: "L64200MH1986PLC041370",
-    officialDomains: ["techmahindra.com"],
-    fullName: "Tech Mahindra Limited",
-    roc: "RoC-Pune",
+  "reliance": {
+    cin: "L17110MH1973PLC019786",
+    officialDomains: ["ril.com", "reliance.com", "jio.com"],
+    fullName: "Reliance Industries Limited",
+    roc: "RoC-Mumbai",
+    status: "Active"
+  },
+  "tata motors": {
+    cin: "L28920MH1945PLC004520",
+    officialDomains: ["tatamotors.com"],
+    fullName: "Tata Motors Limited",
+    roc: "RoC-Mumbai",
+    status: "Active"
+  },
+  "hdfc bank": {
+    cin: "L65920MH1994PLC080618",
+    officialDomains: ["hdfcbank.com"],
+    fullName: "HDFC Bank Limited",
+    roc: "RoC-Mumbai",
+    status: "Active"
+  },
+  "icici bank": {
+    cin: "L65190GJ1994PLC021012",
+    officialDomains: ["icicibank.com"],
+    fullName: "ICICI Bank Limited",
+    roc: "RoC-Vadodara",
     status: "Active"
   }
 };
 
 const FREE_EMAIL_PROVIDERS = [
-  "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "rediffmail.com", "t.me", "telegram"
+  "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "rediffmail.com", "t.me", "telegram", "protonmail.com"
 ];
 
 /**
@@ -80,8 +124,11 @@ async function performLiveDnsLookup(domain) {
     return { hasMx: false, mxServers: [], error: "No domain provided" };
   }
 
+  // Clean domain of any subdomains or paths
+  const cleanDomain = domain.replace(/^https?:\/\//, '').split('/')[0].trim().toLowerCase();
+
   try {
-    const mxRecords = await dns.resolveMx(domain);
+    const mxRecords = await dns.resolveMx(cleanDomain);
     return {
       hasMx: mxRecords && mxRecords.length > 0,
       mxServers: mxRecords ? mxRecords.map(r => r.exchange) : [],
@@ -97,7 +144,48 @@ async function performLiveDnsLookup(domain) {
 }
 
 /**
- * Hybrid Verification: MCA Official Registry + Real Live DNS Network Socket
+ * Search corporate registry by company name, query keywords, or detected email domain
+ */
+function findCompanyInRegistry(claimedCompany, detectedDomain) {
+  const cleanName = (claimedCompany || "").toLowerCase().trim();
+
+  // 1. Direct match on domain
+  if (detectedDomain && domainIndex.has(detectedDomain)) {
+    return domainIndex.get(detectedDomain);
+  }
+
+  // 2. Direct exact alias match
+  if (cleanName && aliasIndex.has(cleanName)) {
+    return aliasIndex.get(cleanName);
+  }
+
+  // 3. Substring / token matching over 1,000+ companies
+  if (cleanName && cleanName.length >= 3) {
+    // Check if any alias is contained in cleanName, or cleanName contained in alias
+    for (const comp of TOP_COMPANIES) {
+      if (comp.fullName.toLowerCase().includes(cleanName) || cleanName.includes(comp.fullName.toLowerCase())) {
+        return comp;
+      }
+      for (const al of comp.aliases) {
+        if (al.length >= 3 && (cleanName.includes(al) || al.includes(cleanName))) {
+          return comp;
+        }
+      }
+    }
+  }
+
+  // 4. Fallback check against CORE_REGISTRY
+  for (const [key, data] of Object.entries(CORE_REGISTRY)) {
+    if (cleanName.includes(key) || (detectedDomain && data.officialDomains.some(d => detectedDomain.endsWith(d)))) {
+      return data;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Hybrid Verification: MCA Official Registry (1,000+ top enterprises) + Real Live DNS Network Socket
  */
 async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
   const claimedLower = (claimedCompany || "").toLowerCase().trim();
@@ -106,15 +194,21 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
   const emailRegex = /[\w\.-]+@([\w\.-]+)/g;
   const emails = [];
   let match;
-  while ((match = emailRegex.exec(rawText)) !== null) {
+  const content = `${claimedCompany || ''} ${rawText || ''}`;
+  while ((match = emailRegex.exec(content)) !== null) {
     emails.push({ full: match[0], domain: match[1].toLowerCase() });
   }
 
   const detectedDomain = emails.length > 0 ? emails[0].domain : "No corporate email found (Messaging channel)";
   let isOfficial = false;
+  let isLegitimateEntity = false;
+  let domainMismatch = false;
   let mcaStatus = "⚠️ Unregistered / Imposter Entity (No verified MCA record found)";
   let cinNumber = null;
+  let officialDomain = null;
   let liveDnsResult = null;
+  let registeredRoc = 'RoC-Corporate Registry';
+  let registeredName = claimedCompany || 'Unspecified Entity';
 
   // 1. Check if email uses a known public free-mail host
   const isFreeMail = FREE_EMAIL_PROVIDERS.some(prov => detectedDomain.includes(prov));
@@ -124,45 +218,76 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     liveDnsResult = await performLiveDnsLookup(detectedDomain);
   }
 
-  // 3. Match against MCA Official Corporate Registry
-  let matchedEntry = null;
-  for (const [key, data] of Object.entries(MCA_OFFICIAL_REGISTRY)) {
-    if (claimedLower.includes(key)) {
-      matchedEntry = data;
-      break;
-    }
-  }
+  // 3. Match against the 1,000+ MCA Official Corporate Registry
+  const matchedEntry = findCompanyInRegistry(claimedCompany, !isFreeMail && emails.length > 0 ? detectedDomain : null);
 
-  if (isFreeMail) {
-    isOfficial = false;
-    mcaStatus = "❌ Identity Imposter: Official corporate recruitment conducted via free public email (@gmail/@yahoo/Telegram) instead of enterprise corporate domain";
-  } else if (matchedEntry) {
+  if (matchedEntry) {
     cinNumber = matchedEntry.cin;
-    const domainMatches = matchedEntry.officialDomains.some(dom => detectedDomain.endsWith(dom));
+    registeredRoc = matchedEntry.roc || 'RoC-India';
+    registeredName = matchedEntry.fullName || claimedCompany;
+    officialDomain = Array.isArray(matchedEntry.officialDomains) ? matchedEntry.officialDomains[0] : '';
 
-    if (domainMatches && liveDnsResult && liveDnsResult.hasMx) {
-      isOfficial = true;
-      mcaStatus = `✅ Verified Public Entity: Active MCA Record (CIN: ${matchedEntry.cin}, ${matchedEntry.roc}) | Live Mail Server Verified: ${liveDnsResult.mxServers[0] || 'Active'}`;
-    } else if (!domainMatches) {
+    if (isFreeMail) {
       isOfficial = false;
-      mcaStatus = `❌ Domain Mismatch: Contact domain (@${detectedDomain}) does not match official MCA records for ${matchedEntry.fullName} (${matchedEntry.officialDomains.join(', ')})`;
+      isLegitimateEntity = false;
+      domainMismatch = true;
+      mcaStatus = `❌ Identity Imposter: Claimed corporate entity is ${matchedEntry.fullName} (CIN: ${matchedEntry.cin}), but recruiter reached out from free public email (@${detectedDomain}) instead of enterprise domain (${matchedEntry.officialDomains.join(', ')})`;
+    } else if (emails.length > 0) {
+      const domainMatches = matchedEntry.officialDomains.some(dom => detectedDomain.endsWith(dom) || dom.endsWith(detectedDomain));
+
+      if (domainMatches && liveDnsResult && liveDnsResult.hasMx) {
+        isOfficial = true;
+        isLegitimateEntity = true;
+        domainMismatch = false;
+        mcaStatus = `✅ Verified Public Entity: Active MCA Record (CIN: ${matchedEntry.cin}, ${registeredRoc}) | Live Mail Server Verified: ${liveDnsResult.mxServers[0] || 'Active'}`;
+      } else if (!domainMatches) {
+        isOfficial = false;
+        isLegitimateEntity = false;
+        domainMismatch = true;
+        mcaStatus = `❌ Domain Mismatch: Contact domain (@${detectedDomain}) does not match official MCA records for ${matchedEntry.fullName} (${matchedEntry.officialDomains.join(', ')})`;
+      } else {
+        isOfficial = false;
+        isLegitimateEntity = false;
+        mcaStatus = `❌ Fraudulent Domain: Domain (@${detectedDomain}) failed live DNS mail server resolution (${liveDnsResult ? liveDnsResult.error : 'No MX record'})`;
+      }
     } else {
-      isOfficial = false;
-      mcaStatus = `❌ Fraudulent Domain: Domain (@${detectedDomain}) failed live DNS mail server resolution (${liveDnsResult ? liveDnsResult.error : 'No MX record'})`;
+      // Matched company name without email provided (e.g. text scan of offer letter)
+      isLegitimateEntity = true;
+      isOfficial = true;
+      mcaStatus = `✅ Known Registered Enterprise: ${matchedEntry.fullName} (CIN: ${matchedEntry.cin}, ${registeredRoc}). Please verify direct application on ${officialDomain || 'official career portal'}.`;
     }
-  } else if (liveDnsResult && !liveDnsResult.hasMx) {
+  } else if (!isFreeMail && emails.length > 0 && liveDnsResult && liveDnsResult.hasMx) {
+    // Custom corporate domain with real live MX servers, but not in top 1,000 listed firms
+    isOfficial = true;
+    isLegitimateEntity = true;
+    mcaStatus = `ℹ️ Active Corporate Domain: Domain (@${detectedDomain}) verified with live MX mail servers (${liveDnsResult.mxServers[0] || 'Active'}). Verify employer credentials directly before signing offers.`;
+  } else if (!isFreeMail && emails.length > 0 && liveDnsResult && !liveDnsResult.hasMx) {
     isOfficial = false;
+    isLegitimateEntity = false;
     mcaStatus = `❌ Non-Existent Domain: Domain (@${detectedDomain}) has no active mail server (DNS: ${liveDnsResult.error || 'NXDOMAIN'})`;
   }
 
   return {
-    claimedCompany: claimedCompany || "Unspecified Entity",
+    claimedCompany: registeredName,
+    companyName: registeredName,
     detectedDomain,
+    domainChecked: detectedDomain,
+    officialDomain: officialDomain || '',
     cin: cinNumber,
+    roc: registeredRoc,
     isOfficialDomain: isOfficial,
+    isLegitimateRegisteredEntity: isLegitimateEntity,
+    isFreeMailProvider: isFreeMail,
+    domainMismatch,
     mcaStatus,
-    liveDnsVerified: liveDnsResult ? liveDnsResult.hasMx : false
+    liveDnsVerified: liveDnsResult ? liveDnsResult.hasMx : false,
+    mxValid: liveDnsResult ? liveDnsResult.hasMx : false
   };
 }
 
-module.exports = { verifyCompanyAgainstMCA, performLiveDnsLookup };
+module.exports = {
+  verifyCompanyAgainstMCA,
+  performLiveDnsLookup,
+  TOP_COMPANIES,
+  findCompanyInRegistry
+};

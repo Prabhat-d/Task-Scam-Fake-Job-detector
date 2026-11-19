@@ -5,9 +5,13 @@ frontend/node_modules/
 
 # Environment Variables (NEVER PUSH TO GITHUB)
 .env
-.env.local
-.env.production
+.env.*
+*.env
+*.env.*
 backend/.env
+backend/.env.*
+Frontend/.env
+Frontend/.env.*
 
 # Python
 __pycache__/

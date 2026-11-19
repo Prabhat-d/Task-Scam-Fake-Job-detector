@@ -108,10 +108,23 @@ async function answerWithGeminiFallback(message, history, language = 'en') {
   const ai = new GoogleGenAI({ apiKey });
   const prompt = `${SYSTEM_PROMPT}\n\nUser query: "${message}"\nTarget language: ${language}.\nReturn ONLY the JSON object without markdown fences.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.5-flash-lite',
-    contents: prompt,
-  });
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+  let response = null;
+  let lastErr = null;
+
+  for (const model of models) {
+    try {
+      response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+      });
+      if (response?.text) break;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (!response && lastErr) throw lastErr;
 
   let text = response.text || '{}';
   text = text.replace(/```json/gi, '').replace(/```/g, '').trim();

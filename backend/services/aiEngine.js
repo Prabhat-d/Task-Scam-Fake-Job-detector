@@ -92,18 +92,31 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         return parts;
       };
 
-      // Run BOTH models in parallel
+      const callGeminiWithFallback = async (parts) => {
+        const models = ["gemini-3.5-flash-lite", "gemini-3.8-flash"];
+        let lastErr = null;
+        for (const model of models) {
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              return await ai.models.generateContent({
+                model,
+                contents: parts,
+                config: { responseMimeType: "application/json" }
+              });
+            } catch (e) {
+              lastErr = e;
+              // Brief backoff before retry for transient 503 spikes
+              await new Promise(r => setTimeout(r, 600));
+            }
+          }
+        }
+        throw lastErr;
+      };
+
+      // Run BOTH models in parallel with automatic model fallback
       const [resModelA, resModelB] = await Promise.all([
-        ai.models.generateContent({
-          model: "gemini-3.5-flash-lite",
-          contents: buildParts(PATTERN_EXTRACTION_PROMPT),
-          config: { responseMimeType: "application/json" }
-        }),
-        ai.models.generateContent({
-          model: "gemini-3.5-flash-lite",
-          contents: buildParts(BEHAVIORAL_PREDICTION_PROMPT),
-          config: { responseMimeType: "application/json" }
-        })
+        callGeminiWithFallback(buildParts(PATTERN_EXTRACTION_PROMPT)),
+        callGeminiWithFallback(buildParts(BEHAVIORAL_PREDICTION_PROMPT))
       ]);
 
       const parsedA = JSON.parse(resModelA.text);
@@ -166,32 +179,73 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
     }
   }
 
-  // Fallback Heuristics
+  // Intelligent Deterministic Heuristic Fallback Engine
+  const lowerText = textContent.toLowerCase();
+
+  const isScam =
+    lowerText.includes('like youtube') ||
+    lowerText.includes('registration fee') ||
+    lowerText.includes('prepaid') ||
+    lowerText.includes('combo task') ||
+    lowerText.includes('unfreeze') ||
+    lowerText.includes('deposit') ||
+    lowerText.includes('vip group') ||
+    (lowerText.includes('earn') && lowerText.includes('per like')) ||
+    (lowerText.includes('t.me') && lowerText.includes('earn'));
+
+  const isSuspicious =
+    lowerText.includes('whatsapp') ||
+    lowerText.includes('comment #') ||
+    lowerText.includes('typing work') ||
+    lowerText.includes('data entry') ||
+    lowerText.includes('urgent requirement');
+
+  const verdict = isScam ? 'CRITICAL_SCAM' : (isSuspicious ? 'SUSPICIOUS' : 'GENUINE_OFFER');
+  const riskScore = isScam ? 92 : (isSuspicious ? 65 : 8);
+
+  const fallbackRedFlags = [];
+  if (isScam) {
+    if (lowerText.includes('like youtube') || lowerText.includes('per like')) fallbackRedFlags.push("Unrealistic daily earnings for simple digital tasks ('Like YouTube videos')");
+    if (lowerText.includes('prepaid') || lowerText.includes('deposit') || lowerText.includes('fee')) fallbackRedFlags.push("Demand for advance payment, deposit, or prepaid merchant tasks");
+    if (lowerText.includes('t.me') || lowerText.includes('telegram')) fallbackRedFlags.push("Directing candidate to encrypted messaging channel (Telegram) to evade moderation");
+  } else if (isSuspicious) {
+    fallbackRedFlags.push("Unofficial communication channel or third-party proxy recruitment bait");
+  }
+
+  // Cross check MCA corporate registry on fallback as well
+  const mcaFallback = await verifyCompanyAgainstMCA(phones[0] ? 'Unverified Recruiter' : 'Online Task Merchant', textContent);
+
   return {
     multiAgentConsensus: {
       engineA: "Deterministic Forensic Matcher",
       engineB: "Stage Progression Machine",
-      consensusScore: 65,
-      liveDnsAudit: "Flagged"
+      consensusScore: riskScore,
+      liveDnsAudit: mcaFallback.liveDnsVerified ? "Passed (Active MX Mail Server)" : "Flagged / Mismatch"
     },
-    riskScore: 65,
-    verdict: "SUSPICIOUS",
-    category: "Unofficial Employment / Lead Bait",
+    riskScore,
+    verdict,
+    category: isScam ? "Prepaid Task Scam / Financial Fraud" : (isSuspicious ? "Unofficial Proxy Recruitment Bait" : "Standard Job Listing"),
     extractedText: textContent,
     scamStage: {
-      currentStage: 1,
-      stageName: "Stage 1: Hook / Lead Bait",
-      stageDescription: "Unverified job listing pattern.",
-      predictedNextMove: "Verify through official portal before applying."
+      currentStage: isScam ? 1 : 0,
+      stageName: isScam ? "Stage 1: Engagement Bait / Task Funnel" : "Safe / Verified Opportunity",
+      stageDescription: isScam ? "Digital task scam funneling users into prepaid deposits." : "Standard career communication pattern.",
+      predictedNextMove: isScam
+        ? "The perpetrator will pay small trial payouts, then transition to prepaid merchant tasks requiring escalating deposits to unfreeze money."
+        : "Proceed through official verified company portals."
     },
-    companyVerification: {
-      claimedCompany: "Unverified Employer",
-      detectedDomain: "None",
-      isOfficialDomain: false,
-      mcaStatus: "Unverified"
-    },
-    redFlags: ["Third-party post without official corporate confirmation"],
-    dossier1930: null
+    behavioralAnalysis: isScam
+      ? "Uses low-barrier engagement lures (likes, ratings) to build compliance before introducing financial deposits."
+      : "Standard communication pattern.",
+    companyVerification: mcaFallback,
+    redFlags: fallbackRedFlags.length > 0 ? fallbackRedFlags : ["Unverified recruitment solicitation"],
+    dossier1930: isScam ? {
+      phoneNumbers: phones.length > 0 ? phones : ["Extracted from text"],
+      telegramHandles: telegramHandles.length > 0 ? telegramHandles : ["None"],
+      upiIds: upis.length > 0 ? upis : ["None detected"],
+      impersonatedEntity: mcaFallback.claimedCompany || "Online Task Merchant",
+      policeNarrative: "Victim targeted by an online employment task scam demanding financial deposits. Candidate promised daily earnings for digital tasks and directed to external communication channels."
+    } : null
   };
 }
 
@@ -270,11 +324,24 @@ async function analyzeScreenCapture(imageBuffer, mimeType = "image/jpeg", apiKey
         }
       ];
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash-lite",
-        contents: parts,
-        config: { responseMimeType: "application/json" }
-      });
+      const models = ["gemini-3.5-flash-lite", "gemini-3.8-flash"];
+      let response = null;
+      let lastErr = null;
+
+      for (const model of models) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: parts,
+            config: { responseMimeType: "application/json" }
+          });
+          if (response?.text) break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!response && lastErr) throw lastErr;
 
       const parsed = JSON.parse(response.text.trim());
       return parsed;

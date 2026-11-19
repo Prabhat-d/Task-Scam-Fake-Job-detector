@@ -669,6 +669,41 @@ app.patch('/api/users/me', authenticate, requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /api/users/me/password
+app.all(['/api/users/me/password', '/api/users/password'], authenticate, requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword) return res.status(400).json({ error: 'New password required' });
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(newPassword, salt);
+    if (isMongoConnected && req.user._id) {
+      await User.updateOne({ _id: req.user._id }, { $set: { password: hash } });
+    }
+    const cleanEmail = (req.user.email || '').toLowerCase().trim();
+    if (cleanEmail && MEMORY_USERS.has(cleanEmail)) {
+      MEMORY_USERS.get(cleanEmail).password = hash;
+    }
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
+// DELETE /api/users/me
+app.delete('/api/users/me', authenticate, requireAuth, async (req, res) => {
+  try {
+    if (isMongoConnected && req.user._id) {
+      await User.deleteOne({ _id: req.user._id });
+    }
+    const cleanEmail = (req.user.email || '').toLowerCase().trim();
+    if (cleanEmail) MEMORY_USERS.delete(cleanEmail);
+    res.clearCookie('token');
+    res.json({ success: true, message: 'Account deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // POST /api/auth/google (Google Sign-In / Sign-Up with Permissions)
 app.post('/api/auth/google', async (req, res) => {
   try {
@@ -1320,18 +1355,35 @@ app.get('/api/admin/headlines', (req, res) => {
   res.json(ACTIVE_HEADLINES_DATA);
 });
 
+let NOTIFICATIONS_LIST = [
+  {
+    id: 'n1',
+    type: 'admin_alert',
+    title: 'New High-Risk Threat Detected',
+    body: 'Multiple complaints filed against UPI ID earnfast92@okaxis.',
+    read: false,
+    createdAt: new Date(Date.now() - 15 * 60000).toISOString()
+  }
+];
+
 app.get('/api/notifications', (req, res) => {
-  res.json({
-    items: [
-      {
-        id: 'n1',
-        type: 'admin_alert',
-        title: 'New High-Risk Threat Detected',
-        body: 'Multiple complaints filed against UPI ID earnfast92@okaxis.',
-        createdAt: new Date(Date.now() - 15 * 60000).toISOString()
-      }
-    ]
-  });
+  res.json({ items: NOTIFICATIONS_LIST });
+});
+
+app.all(['/api/notifications/read-all', '/api/notifications/mark-all-read'], (req, res) => {
+  NOTIFICATIONS_LIST = NOTIFICATIONS_LIST.map(n => ({ ...n, read: true }));
+  res.json({ success: true, items: NOTIFICATIONS_LIST });
+});
+
+app.all('/api/notifications/:id/read', (req, res) => {
+  const { id } = req.params;
+  const item = NOTIFICATIONS_LIST.find(n => n.id === id);
+  if (item) item.read = true;
+  res.json({ success: true, item: item || { id, read: true } });
+});
+
+app.get('/api/uploads', (req, res) => {
+  res.json({ items: [], total: 0 });
 });
 
 // 12. Full Admin Suite (Overview, Users, Admin Scans, Entities Scam Database, Benchmark, Broadcast)

@@ -677,13 +677,9 @@ if (fs.existsSync(nseCsvPath)) {
       if (!existing.registrySource.includes('NSE')) {
         existing.registrySource = `${existing.registrySource} + NSE EQUITY_L.csv`;
       }
-      if (!existing.aliases.includes(symbol.toLowerCase()) && symbol.length >= 3) {
-        existing.aliases.push(symbol.toLowerCase());
-      }
       nseMatched++;
     } else {
       const aliases = [companyName.toLowerCase()];
-      if (symbol.length >= 3) aliases.push(symbol.toLowerCase());
       add(
         `nse_${symbol}`,
         companyName,

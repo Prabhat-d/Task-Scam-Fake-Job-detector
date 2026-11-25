@@ -2,10 +2,11 @@ const dns = require('dns').promises;
 const path = require('path');
 const fs = require('fs');
 
-// Load comprehensive 1,000+ verified corporate registry dataset
+// Load comprehensive 2,800+ verified corporate registry dataset (NSE EQUITY_L.csv + MCA curated filings)
 let TOP_COMPANIES = [];
 const aliasIndex = new Map();
 const domainIndex = new Map();
+const symbolIndex = new Map();
 
 try {
   const dataPath = path.join(__dirname, '../data/topCompanies.json');
@@ -16,6 +17,11 @@ try {
     for (const comp of TOP_COMPANIES) {
       // Index by full name
       aliasIndex.set(comp.fullName.toLowerCase().trim(), comp);
+
+      // Index by NSE ticker symbol (exact match only)
+      if (comp.nseSymbol) {
+        symbolIndex.set(comp.nseSymbol.toLowerCase().trim(), comp);
+      }
 
       // Index by aliases
       if (Array.isArray(comp.aliases)) {
@@ -180,9 +186,12 @@ function findCompanyInRegistry(claimedCompany, detectedDomain) {
     return domainIndex.get(detectedDomain);
   }
 
-  // 2. Direct exact alias match
+  // 2. Direct exact alias or exact NSE ticker symbol match
   if (cleanName && aliasIndex.has(cleanName)) {
     return aliasIndex.get(cleanName);
+  }
+  if (cleanName && symbolIndex.has(cleanName)) {
+    return symbolIndex.get(cleanName);
   }
 
   // 3. Substring / word-boundary matching over 2,800+ verified companies

@@ -189,7 +189,7 @@ const GENERIC_CLAIMED_NAMES = new Set([
 ]);
 
 const NON_CORPORATE_URL_HOSTS = new Set([
-  'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'rb.gy', 'shorturl.at',
+  'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'g.co', 'ow.ly', 'rb.gy', 'shorturl.at',
   'forms.gle', 'docs.google.com', 'drive.google.com', 'sites.google.com',
   't.me', 'telegram.me', 'wa.me', 'chat.whatsapp.com', 'whatsapp.com',
   'linkedin.com', 'naukri.com', 'indeed.com', 'glassdoor.com', 'foundit.in',

@@ -99,7 +99,13 @@ export function buildReasons(scan) {
       evidence: domain.domain,
     });
   }
-  if (!flags.some((f) => MONEY_FLAGS.includes(f.id)) && !upis.length) {
+  const hasMoneyFlag = flags.some((f) => {
+    if (MONEY_FLAGS.includes(f.id)) return true;
+    const msg = `${f.title?.en || ''} ${f.evidence || ''}`.toLowerCase();
+    return /\b(fee|fees|charge|charges|deposit|prepaid|unfreeze|payment|upi|transfer|pay\s+rs)\b/i.test(msg);
+  });
+  const ocrUnavailable = (scan?.extractedText || '').toLowerCase().includes('text extraction was temporarily unavailable');
+  if (!hasMoneyFlag && !upis.length && !ocrUnavailable) {
     pro.push({
       id: 'no_money',
       title: L('No request for money found', 'पैसे की कोई मांग नहीं मिली', 'ਪੈਸੇ ਦੀ ਕੋਈ ਮੰਗ ਨਹੀਂ ਮਿਲੀ'),

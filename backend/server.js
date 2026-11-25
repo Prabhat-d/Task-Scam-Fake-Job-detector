@@ -181,28 +181,41 @@ function adaptScanForFrontend(savedRecord, files = []) {
     return rf;
   }) : [];
 
+  const rawCompanyName = (savedRecord.companyVerification?.companyName || savedRecord.companyVerification?.claimedCompany || '').trim();
+  const isGenericCompanyName = !rawCompanyName || ['unspecified entity', 'not provided', 'online task merchant', 'unverified recruiter', 'unknown', 'unknown company', 'n/a'].includes(rawCompanyName.toLowerCase());
+  const isVerifiedCompany = !!savedRecord.companyVerification?.isLegitimateRegisteredEntity;
+
   const company = savedRecord.companyVerification ? {
-    name: savedRecord.companyVerification.companyName || savedRecord.companyVerification.claimedCompany || 'Not Provided',
-    queried: savedRecord.companyVerification.companyName || savedRecord.companyVerification.claimedCompany || '',
-    cin: savedRecord.companyVerification.cin || 'N/A',
+    name: isGenericCompanyName ? 'Not Provided' : rawCompanyName,
+    queried: isGenericCompanyName ? '' : rawCompanyName,
+    cin: savedRecord.companyVerification.cin || (isGenericCompanyName ? null : 'N/A'),
     isin: savedRecord.companyVerification.isin || null,
     nseSymbol: savedRecord.companyVerification.nseSymbol || null,
     registrySource: savedRecord.companyVerification.registrySource || null,
-    status: savedRecord.companyVerification.isLegitimateRegisteredEntity ? 'active' : (savedRecord.companyVerification.companyName ? 'not_found' : 'not_provided'),
-    verified: !!savedRecord.companyVerification.isLegitimateRegisteredEntity,
-    nameMatch: true,
+    status: isGenericCompanyName ? 'not_provided' : (isVerifiedCompany ? 'active' : 'not_found'),
+    verified: isVerifiedCompany,
+    nameMatch: isVerifiedCompany,
     incorporated: savedRecord.companyVerification.incorporated || null,
     state: savedRecord.companyVerification.roc || 'India'
   } : { status: 'not_provided' };
 
+  const rawDomainChecked = (savedRecord.companyVerification?.domainChecked || '').trim();
+  const domainChecked = /^no corporate email/i.test(rawDomainChecked) ? '' : rawDomainChecked;
+  const hrEmail = (savedRecord.companyVerification?.hrEmail || '').trim();
+  const officialDomain = (savedRecord.companyVerification?.officialDomain || '').trim();
+
   const domain = {
-    officialDomain: savedRecord.companyVerification?.officialDomain || '',
-    domain: savedRecord.companyVerification?.domainChecked || '',
-    hrEmail: savedRecord.companyVerification?.hrEmail || '',
-    emailType: savedRecord.companyVerification?.isFreeMailProvider ? 'free' : 'corporate',
-    mx: savedRecord.companyVerification?.mxValid !== false,
-    matchesOfficial: !savedRecord.companyVerification?.domainMismatch,
-    ageDays: 450
+    officialDomain,
+    domain: domainChecked,
+    hrEmail,
+    emailType: savedRecord.companyVerification?.isFreeMailProvider ? 'free' : (hrEmail ? 'corporate' : null),
+    mx: domainChecked ? (savedRecord.companyVerification?.mxValid ?? null) : null,
+    matchesOfficial: !domainChecked
+      ? null
+      : (savedRecord.companyVerification?.domainMismatch
+          ? false
+          : (savedRecord.companyVerification?.isOfficialDomain && officialDomain ? true : null)),
+    ageDays: null
   };
 
   const entityList = [];
@@ -210,10 +223,16 @@ function adaptScanForFrontend(savedRecord, files = []) {
   
   const toArray = (v) => {
     if (!v) return [];
-    if (Array.isArray(v)) return v;
+    if (Array.isArray(v)) {
+      return v.filter((item) => {
+        const s = String(item || '').trim().toLowerCase();
+        return s && s !== 'none' && !s.includes('none detected') && !s.includes('extracted from') && !s.includes('not found') && !s.includes('unspecified');
+      });
+    }
     if (typeof v === 'string') {
       const clean = v.trim();
-      if (!clean || clean.toLowerCase().includes('not found')) return [];
+      const low = clean.toLowerCase();
+      if (!clean || low === 'none' || low.includes('none detected') || low.includes('extracted from') || low.includes('not found') || low.includes('unspecified')) return [];
       return clean.split(',').map(s => s.trim()).filter(Boolean);
     }
     return [];
@@ -383,14 +402,11 @@ async function processScan(req, res) {
     if (req.body.hrEmail) text += `\nHR Email: ${req.body.hrEmail}`;
     if (req.body.link) text += `\nLink: ${req.body.link}`;
     if (req.body.amountPaid) text += `\nAmount Paid: ₹${req.body.amountPaid}`;
-    if (!text && primaryFile) {
-      text = `[Uploaded Image: ${primaryFile.originalname}]`;
-    }
 
     const imageBuffer = primaryFile ? primaryFile.buffer : null;
     const mimeType = primaryFile ? primaryFile.mimetype : null;
 
-    if (!text && !imageBuffer) {
+    if (!text.trim() && !imageBuffer) {
       return res.status(400).json({ error: "Please provide text, links, or an uploaded screenshot/letter." });
     }
 
@@ -1286,8 +1302,8 @@ app.get('/api/verify/domain', async (req, res) => {
       domain,
       mx: dnsResult ? dnsResult.hasMx : false,
       mxServers: dnsResult ? dnsResult.mxServers : [],
-      ageDays: 450,
-      emailType: 'corporate'
+      ageDays: null,
+      emailType: null
     });
   } catch (err) {
     res.json({ domain: req.query.domain, mx: false });

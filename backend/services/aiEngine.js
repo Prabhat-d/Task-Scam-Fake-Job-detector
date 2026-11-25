@@ -155,6 +155,7 @@ function evaluateForensicSignals(textContent, mcaInfo, entities = {}) {
 
   if (
     /\b(?:typing\s+work|home\s+based\s+(?:typing|job)|no\s+interview\s+direct\s+joining|spot\s+joining\s+offer)\b/i.test(activeText) ||
+    /\bno\s+interview\b[^.!?\n]{0,45}\bno\s+experience\b|\bno\s+experience\s+required\b[^.!?\n]{0,55}\b(?:data\s+entry|work\s+from\s+home|register|start\s+working)\b/i.test(activeText) ||
     (!mcaInfo.isOfficialDomain && /\b(?:data\s+entry|urgent\s+requirement)\b/i.test(activeText))
   ) {
     suspiciousReasons.push("Low-barrier WFH / typing / urgent hiring lure typical of third-party proxy funnels");
@@ -168,19 +169,60 @@ function evaluateForensicSignals(textContent, mcaInfo, entities = {}) {
   };
 }
 
+function extractEntitiesFromText(text) {
+  const safe = String(text || '');
+  const phones = safe.match(/(?:\+91[\-\s]?)?[6789]\d{9}/g) || [];
+  const upis = safe.match(/(?:^|[\s:(])([\w.\-]+@(?:ok(?:icici|axis|hdfcbank|sbi)|ybl|ibl|axl|paytm|upi|apl|pingpay|fbl|kotak|indus|ikwik|waicici|waaxis|wahdfcbank|wasbi))\b/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [];
+  const telegramHandles = [
+    ...(safe.match(/\bt\.me\/[\w_]+/gi) || []),
+    ...(safe.match(/(?:^|[\s:(])(@[\w_]{4,})(?![\w.]*\.[a-z]{2,})/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [])
+  ];
+  return { phones, upis, telegramHandles };
+}
+
+async function extractTextViaGroqVision(imageBuffer, mimeType) {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!imageBuffer || !groqKey || groqKey.includes('YOUR_')) return '';
+  try {
+    const Groq = require('groq-sdk');
+    const groq = new Groq({ apiKey: groqKey });
+    const dataUrl = `data:${mimeType || 'image/jpeg'};base64,${imageBuffer.toString('base64')}`;
+    const completion = await Promise.race([
+      groq.chat.completions.create({
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        temperature: 0,
+        max_tokens: 900,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Transcribe ALL visible text in this job offer / recruitment screenshot verbatim (company name, job title, salary, URLs, emails, phone numbers, disclaimers). Return only the extracted plain text.'
+              },
+              { type: 'image_url', image_url: { url: dataUrl } }
+            ]
+          }
+        ]
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Groq vision timed out')), 15000))
+    ]);
+    return (completion.choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    console.warn('⚠️ Groq vision OCR fallback unavailable:', e.message);
+    return '';
+  }
+}
+
 /**
  * Multi-Agent Parallel Execution supporting both Text and Image (Multimodal)
  */
 async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "image/png") {
-  const textContent = rawText || "Please analyze this uploaded screenshot or document.";
-  
-  // Extract base regex entities if text is available
-  const phones = textContent.match(/(?:\+91[\-\s]?)?[6789]\d{9}/g) || [];
-  const upis = textContent.match(/(?:^|[\s:(])([\w.\-]+@(?:ok(?:icici|axis|hdfcbank|sbi)|ybl|ibl|axl|paytm|upi|apl|pingpay|fbl|kotak|indus|ikwik|waicici|waaxis|wahdfcbank|wasbi))\b/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [];
-  const telegramHandles = [
-    ...(textContent.match(/\bt\.me\/[\w_]+/gi) || []),
-    ...(textContent.match(/(?:^|[\s:(])(@[\w_]{4,})(?![\w.]*\.[a-z]{2,})/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [])
-  ];
+  // Never feed synthetic "[Uploaded Image: WhatsApp Image ...]" filename tags into scam keyword heuristics
+  const cleanedRawText = String(rawText || '').replace(/\[Uploaded Image:[^\]]*\]/gi, '').trim();
+  const hasRealUserText = cleanedRawText.length > 0;
+  let effectiveText = cleanedRawText;
+  const promptInputText = hasRealUserText ? cleanedRawText : "Please transcribe and analyze this uploaded job offer or recruitment screenshot.";
 
   if (apiKey && !apiKey.includes("YOUR_")) {
     try {
@@ -188,7 +230,7 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       const ai = new GoogleGenAI({ apiKey });
 
       const buildParts = (promptText) => {
-        const parts = [{ text: `${promptText}\n\nUSER INPUT / METADATA:\n${textContent}` }];
+        const parts = [{ text: `${promptText}\n\nUSER INPUT / METADATA:\n${promptInputText}` }];
         if (imageBuffer) {
           parts.push({
             inlineData: {
@@ -201,7 +243,7 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       };
 
       const callGeminiWithFallback = async (parts) => {
-        const models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
+        const models = ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
         let lastErr = null;
         for (const model of models) {
           try {
@@ -217,23 +259,25 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         throw lastErr;
       };
 
-      const withTimeout = (promise, ms = 12000) =>
+      const timeoutMs = imageBuffer ? 25000 : 12000;
+      const withTimeout = (promise, ms) =>
         Promise.race([
           promise,
           new Promise((_, reject) => setTimeout(() => reject(new Error(`AI generation timed out after ${ms}ms`)), ms))
         ]);
 
-      // Run BOTH models in parallel with automatic model fallback & 12s overall timeout
+      // Run BOTH models in parallel with automatic model fallback
       const [resModelA, resModelB] = await withTimeout(Promise.all([
         callGeminiWithFallback(buildParts(PATTERN_EXTRACTION_PROMPT)),
         callGeminiWithFallback(buildParts(BEHAVIORAL_PREDICTION_PROMPT))
-      ]), 12000);
+      ]), timeoutMs);
 
       const parsedA = JSON.parse(resModelA.text);
       const parsedB = JSON.parse(resModelB.text);
 
       const ocrExtracted = parsedA.ocrText || "";
-      const combinedAnalysisText = `${textContent}\n${ocrExtracted} ${(parsedA.redFlags || []).join(" ")}`;
+      const combinedAnalysisText = `${cleanedRawText}\n${ocrExtracted} ${(parsedA.redFlags || []).join(" ")}`.trim();
+      const { phones, upis, telegramHandles } = extractEntitiesFromText(combinedAnalysisText);
 
       // Perform Real Live DNS & MCA Verification on detected company/emails
       const mcaResult = await verifyCompanyAgainstMCA(parsedA.claimedCompany, combinedAnalysisText);
@@ -291,7 +335,7 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         riskScore: finalRiskScore,
         verdict: finalVerdict,
         category: overriddenCategory,
-        extractedText: ocrExtracted || textContent,
+        extractedText: ocrExtracted || cleanedRawText,
         scamStage: {
           currentStage: isGenuine ? 0 : Math.max(1, parsedA.currentStage || (finalVerdict === "CRITICAL_SCAM" ? 2 : 1)),
           stageName: isGenuine ? "Safe / Non-Scam" : (parsedA.verdict === "GENUINE_OFFER" ? (finalVerdict === "CRITICAL_SCAM" ? "Stage 2: Identity Spoof / Advance-Fee Trap" : "Stage 1: Hook / Funnel") : (parsedA.stageName || "Stage 1: Hook / Funnel")),
@@ -314,7 +358,44 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
     }
   }
 
+  // If an image was uploaded and Gemini failed, attempt Groq Vision OCR before falling back to heuristics
+  if (imageBuffer) {
+    const groqOcrText = await extractTextViaGroqVision(imageBuffer, mimeType);
+    if (groqOcrText) {
+      effectiveText = cleanedRawText ? `${cleanedRawText}\n${groqOcrText}` : groqOcrText;
+    }
+  }
+
+  // If image-only upload could not be OCR'd by any vision provider, return an honest unextracted state (never guess from filename)
+  if (!effectiveText && imageBuffer) {
+    const emptyMca = await verifyCompanyAgainstMCA('', '');
+    return {
+      multiAgentConsensus: {
+        engineA: "Vision OCR Unavailable",
+        engineB: "Manual Review Recommended",
+        consensusScore: 50,
+        liveDnsAudit: "Not Checked (No text extracted)"
+      },
+      riskScore: 50,
+      verdict: "SUSPICIOUS",
+      category: "Image OCR Temporarily Unavailable",
+      extractedText: "Image uploaded, but automated OCR/vision text extraction was temporarily unavailable. Please paste the job text or retry.",
+      scamStage: {
+        currentStage: 0,
+        stageName: "Unverified Image",
+        stageDescription: "Could not read text from the uploaded image because AI vision services timed out.",
+        predictedNextMove: "Paste the message text or official email/URL so MCA, DNS, and forensic checks can run accurately."
+      },
+      behavioralAnalysis: "Automated OCR could not extract text from this screenshot. Verify sender domain and MCA registration manually before responding.",
+      companyVerification: emptyMca,
+      redFlags: ["Could not extract text from screenshot automatically — verify company email, official career URL, and never pay any fee"],
+      dossier1930: null
+    };
+  }
+
   // Intelligent Deterministic Heuristic Fallback Engine
+  const textContent = effectiveText || "Please analyze this uploaded screenshot or document.";
+  const { phones, upis, telegramHandles } = extractEntitiesFromText(textContent);
   const companyMatch = textContent.match(/(?:company|employer|offer\s+(?:letter|from)|selected\s+(?:at|for)|from|at|join|with)\s*[:\-]?\s*([A-Z][A-Za-z0-9\s&.]{2,45})/);
   const guessedCompany = companyMatch ? companyMatch[1].trim() : (phones[0] ? 'Unverified Recruiter' : 'Online Task Merchant');
   const mcaFallback = await verifyCompanyAgainstMCA(guessedCompany, textContent);

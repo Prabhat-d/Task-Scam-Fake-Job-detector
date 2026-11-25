@@ -15,6 +15,8 @@ import { scansService } from '../services/scansService.js';
 import { SAMPLE_TEXTS } from '../mocks/data.js';
 import { USE_MOCK } from '../api/axios.js';
 
+import { useAuthStore } from '../store/authStore.js';
+
 const EMPTY = { text: '', link: '', companyName: '', hrEmail: '', amountPaid: '' };
 
 /** ChatGPT-style scanner: history sidebar on the left, input on the right. */
@@ -22,7 +24,8 @@ export default function Scan() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const history = useAsync(() => scansService.list({ limit: 200 }), []);
+  const userId = useAuthStore((s) => s.user?.id);
+  const history = useAsync(() => scansService.list({ limit: 200 }), [userId]);
 
   const [tab, setTab] = useState('upload');
   const [files, setFiles] = useState([]);

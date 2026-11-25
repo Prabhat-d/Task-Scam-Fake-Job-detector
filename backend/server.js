@@ -24,7 +24,24 @@ function sanitizeUser(u) {
   if (!u) return null;
   const obj = typeof u.toObject === 'function' ? u.toObject() : { ...u };
   delete obj.password;
+  if (!obj.id && obj._id) obj.id = obj._id.toString();
   return obj;
+}
+
+function getUserIdentity(user) {
+  if (!user) return { userId: null, userEmail: null };
+  const userId = user._id ? user._id.toString() : (user.id || null);
+  const userEmail = user.email ? user.email.toLowerCase().trim() : null;
+  return { userId, userEmail };
+}
+
+function scanBelongsToUser(record, user) {
+  if (!record || !user) return false;
+  if (user.role === 'admin') return true;
+  const { userId, userEmail } = getUserIdentity(user);
+  if (userId && record.userId && record.userId === userId) return true;
+  if (userEmail && record.userEmail && record.userEmail.toLowerCase().trim() === userEmail) return true;
+  return false;
 }
 
 const app = express();
@@ -55,6 +72,8 @@ const upload = multer({
 });
 
 let inMemoryScans = [];
+const USER_NOTIFICATIONS = new Map();
+const GLOBAL_ALERT_READ_BY = new Map();
 
 // MongoDB Atlas Connection
 const MONGO_URI = process.env.MONGO_URI;
@@ -163,14 +182,17 @@ function adaptScanForFrontend(savedRecord, files = []) {
   }) : [];
 
   const company = savedRecord.companyVerification ? {
-    name: savedRecord.companyVerification.companyName || 'Not Provided',
-    queried: savedRecord.companyVerification.companyName || '',
+    name: savedRecord.companyVerification.companyName || savedRecord.companyVerification.claimedCompany || 'Not Provided',
+    queried: savedRecord.companyVerification.companyName || savedRecord.companyVerification.claimedCompany || '',
     cin: savedRecord.companyVerification.cin || 'N/A',
+    isin: savedRecord.companyVerification.isin || null,
+    nseSymbol: savedRecord.companyVerification.nseSymbol || null,
+    registrySource: savedRecord.companyVerification.registrySource || null,
     status: savedRecord.companyVerification.isLegitimateRegisteredEntity ? 'active' : (savedRecord.companyVerification.companyName ? 'not_found' : 'not_provided'),
     verified: !!savedRecord.companyVerification.isLegitimateRegisteredEntity,
     nameMatch: true,
-    incorporated: '2016-04-12',
-    state: 'India'
+    incorporated: savedRecord.companyVerification.incorporated || null,
+    state: savedRecord.companyVerification.roc || 'India'
   } : { status: 'not_provided' };
 
   const domain = {
@@ -241,14 +263,15 @@ function adaptScanForFrontend(savedRecord, files = []) {
   } : null;
 
   const scanId = savedRecord.scanId || (savedRecord._id ? savedRecord._id.toString() : `scn_${Date.now()}`);
+  const effectiveFiles = (files && files.length > 0) ? files : (Array.isArray(savedRecord.files) ? savedRecord.files : []);
 
   return {
     id: scanId,
     scanId: scanId,
-    userId: 'u_1001',
+    userId: savedRecord.userId || 'anonymous',
     createdAt: savedRecord.createdAt || new Date().toISOString(),
     status: 'completed',
-    type: files.length > 0 ? 'offer_letter' : 'job_post',
+    type: effectiveFiles.length > 0 ? 'offer_letter' : 'job_post',
     score: savedRecord.riskScore,
     riskScore: savedRecord.riskScore,
     verdict,
@@ -268,11 +291,11 @@ function adaptScanForFrontend(savedRecord, files = []) {
     company,
     domain,
     entities: entityList,
-    files: files.map((f, idx) => ({
+    files: effectiveFiles.map((f, idx) => ({
       id: `${scanId}_f${idx}`,
       name: f.originalname || f.name || 'document',
       size: f.size || 0,
-      type: f.mimetype || 'image/jpeg'
+      type: f.mimetype || f.type || 'image/jpeg'
     })),
     dossier1930: savedRecord.dossier1930
   };
@@ -307,12 +330,53 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Helper: fetch scans scoped strictly to the authenticated user
+async function fetchUserScans(user, query = {}) {
+  const { userId, userEmail } = getUserIdentity(user);
+  let records = [];
+  if (isMongoConnected) {
+    const orConds = [];
+    if (userId) orConds.push({ userId });
+    if (userEmail) orConds.push({ userEmail });
+    const filter = orConds.length ? { $or: orConds } : { userId: '__none__' };
+    records = await ThreatScan.find(filter).sort({ createdAt: -1 }).limit(500);
+  } else {
+    records = inMemoryScans.filter(r =>
+      (userId && r.userId === userId) || (userEmail && r.userEmail === userEmail)
+    );
+  }
+
+  let items = records.map(r => adaptScanForFrontend(r));
+  const { verdict, type, q, from, to } = query;
+  if (verdict) items = items.filter(s => s.verdict === verdict);
+  if (type) items = items.filter(s => s.type === type);
+  if (q) {
+    const ql = String(q).toLowerCase();
+    items = items.filter(s =>
+      `${s.id} ${s.extractedText} ${s.company?.name || ''} ${s.verdict} ${s.category || ''}`.toLowerCase().includes(ql)
+    );
+  }
+  if (from) {
+    const fDate = new Date(from);
+    if (!Number.isNaN(fDate.getTime())) items = items.filter(s => new Date(s.createdAt) >= fDate);
+  }
+  if (to) {
+    const tDate = new Date(to);
+    if (!Number.isNaN(tDate.getTime())) {
+      tDate.setHours(23, 59, 59, 999);
+      items = items.filter(s => new Date(s.createdAt) <= tDate);
+    }
+  }
+  return items;
+}
+
 // Helper function to process scan
 async function processScan(req, res) {
   try {
     // Accommodate both single file ('image') and multiple files ('files[]')
     const files = req.files || (req.file ? [req.file] : []);
     const primaryFile = files[0] || null;
+    const { userId, userEmail } = getUserIdentity(req.user);
 
     let text = req.body.text || '';
     if (req.body.companyName) text += `\nCompany: ${req.body.companyName}`;
@@ -332,19 +396,30 @@ async function processScan(req, res) {
 
     // Run Multimodal AI & MCA Verification
     const analysis = await analyzeThreat(text, process.env.GEMINI_API_KEY, imageBuffer, mimeType);
+    const savedFiles = files.map(f => ({
+      name: f.originalname || 'document',
+      size: f.size || 0,
+      mimetype: f.mimetype || 'application/octet-stream'
+    }));
 
-    // Save to Database (MongoDB Atlas)
+    // Save to Database (MongoDB Atlas) scoped to authenticated user
     const storedText = (analysis.extractedText && analysis.extractedText.length > 20) ? analysis.extractedText : (text + (primaryFile ? ` (Image: ${primaryFile.originalname})` : ""));
     let savedRecord = null;
     if (isMongoConnected) {
       try {
         savedRecord = await ThreatScan.create({
+          userId: userId || 'public_guest',
+          userEmail: userEmail || null,
           rawInput: storedText,
           riskScore: analysis.riskScore,
           verdict: analysis.verdict,
           category: analysis.category,
           scamStage: analysis.scamStage,
-          companyVerification: analysis.companyVerification,
+          companyVerification: {
+            ...analysis.companyVerification,
+            hrEmail: req.body.hrEmail || analysis.companyVerification?.hrEmail || ''
+          },
+          files: savedFiles,
           redFlags: analysis.redFlags,
           dossier1930: analysis.dossier1930
         });
@@ -356,19 +431,44 @@ async function processScan(req, res) {
     if (!savedRecord) {
       savedRecord = {
         scanId: `SCAN-${Math.floor(100000 + Math.random() * 900000)}`,
+        userId: userId || 'public_guest',
+        userEmail: userEmail || null,
         createdAt: new Date(),
         rawInput: storedText,
-        ...analysis
+        files: savedFiles,
+        ...analysis,
+        companyVerification: {
+          ...analysis.companyVerification,
+          hrEmail: req.body.hrEmail || analysis.companyVerification?.hrEmail || ''
+        }
       };
       inMemoryScans.unshift(savedRecord);
     }
 
+    const scanId = savedRecord.scanId || savedRecord._id?.toString();
     // Adapt to full payload satisfying both frontend components & backend callers
     const frontendPayload = adaptScanForFrontend(savedRecord, files);
 
+    if (userId) {
+      const notif = {
+        id: `n_scan_${Date.now()}`,
+        userId,
+        type: 'scan_completed',
+        title: `Scan ${scanId} Completed`,
+        body: `Result: ${frontendPayload.verdict.toUpperCase()} (${analysis.riskScore}/100)`,
+        link: `/result/${scanId}`,
+        read: false,
+        createdAt: new Date().toISOString()
+      };
+      const existing = USER_NOTIFICATIONS.get(userId) || [];
+      USER_NOTIFICATIONS.set(userId, [notif, ...existing].slice(0, 50));
+      io.to(`user:${userId}`).emit('scan:completed', { scanId });
+      io.to(`user:${userId}`).emit('notification:new', notif);
+    }
+
     res.json({
       success: true,
-      scanId: savedRecord.scanId || savedRecord._id,
+      scanId,
       ...frontendPayload,
       ...analysis
     });
@@ -379,21 +479,15 @@ async function processScan(req, res) {
 }
 
 // 3. Scan Threat Endpoints (Supports both /api/scan and /api/scans)
-app.post('/api/scan', upload.single('image'), processScan);
-app.post('/api/scans', upload.any(), processScan);
+app.post('/api/scan', authenticate, upload.single('image'), processScan);
+app.post('/api/scans', authenticate, upload.any(), processScan);
 
-// 4. Scans Listing (for Frontend Scans List and Admin Table)
-app.get('/api/scans', async (req, res) => {
+// 4. Scans Listing (Strictly scoped per authenticated user)
+app.get('/api/scans', authenticate, requireAuth, async (req, res) => {
   try {
-    let items = [];
-    if (isMongoConnected) {
-      const records = await ThreatScan.find().sort({ createdAt: -1 }).limit(50);
-      items = records.map(r => adaptScanForFrontend(r));
-    } else {
-      items = inMemoryScans.map(r => adaptScanForFrontend(r));
-    }
-    const page = parseInt(req.query.page) || 1;
-    const limit = 12;
+    const items = await fetchUserScans(req.user, req.query);
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 500);
     const total = items.length;
     res.json({
       items: items.slice((page - 1) * limit, page * limit),
@@ -408,19 +502,23 @@ app.get('/api/scans', async (req, res) => {
 });
 
 // 5. Scan Status Endpoint (Required by /processing/:scanId)
-app.get('/api/scans/:id/status', async (req, res) => {
+app.get('/api/scans/:id/status', authenticate, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     let record = null;
     if (isMongoConnected) {
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        record = await ThreatScan.findById(id);
-      } else {
-        record = await ThreatScan.findOne({ scanId: id });
-      }
+      record = mongoose.Types.ObjectId.isValid(id)
+        ? await ThreatScan.findById(id)
+        : await ThreatScan.findOne({ scanId: id });
     }
     if (!record) {
       record = inMemoryScans.find(s => s.scanId === id || s.id === id);
+    }
+    if (!record) {
+      return res.status(404).json({ message: "Scan not found" });
+    }
+    if (!scanBelongsToUser(record, req.user) && record.userId !== 'public_guest') {
+      return res.status(403).json({ message: "Access denied" });
     }
     res.json({
       status: 'completed',
@@ -434,16 +532,14 @@ app.get('/api/scans/:id/status', async (req, res) => {
 });
 
 // 5b. Single Scan Details (for /result/:scanId)
-app.get('/api/scans/:id', async (req, res) => {
+app.get('/api/scans/:id', authenticate, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     let record = null;
     if (isMongoConnected) {
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        record = await ThreatScan.findById(id);
-      } else {
-        record = await ThreatScan.findOne({ scanId: id });
-      }
+      record = mongoose.Types.ObjectId.isValid(id)
+        ? await ThreatScan.findById(id)
+        : await ThreatScan.findOne({ scanId: id });
     }
     if (!record) {
       record = inMemoryScans.find(s => s.scanId === id || s.id === id);
@@ -451,16 +547,35 @@ app.get('/api/scans/:id', async (req, res) => {
     if (!record) {
       return res.status(404).json({ message: "Scan not found" });
     }
+    if (!scanBelongsToUser(record, req.user) && record.userId !== 'public_guest') {
+      return res.status(403).json({ message: "Access denied: scan belongs to another user" });
+    }
     res.json(adaptScanForFrontend(record));
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch scan", details: err.message });
   }
 });
 
-// 5c. Delete Scan
-app.delete('/api/scans/:id', async (req, res) => {
+// 5c. Delete Scan (Strictly owner or admin)
+app.delete('/api/scans/:id', authenticate, requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    let record = null;
+    if (isMongoConnected) {
+      record = mongoose.Types.ObjectId.isValid(id)
+        ? await ThreatScan.findById(id)
+        : await ThreatScan.findOne({ scanId: id });
+    }
+    if (!record) {
+      record = inMemoryScans.find(s => s.scanId === id || s.id === id);
+    }
+    if (!record) {
+      return res.status(404).json({ message: "Scan not found" });
+    }
+    if (!scanBelongsToUser(record, req.user)) {
+      return res.status(403).json({ message: "Access denied: cannot delete another user's scan" });
+    }
+
     if (isMongoConnected) {
       if (mongoose.Types.ObjectId.isValid(id)) {
         await ThreatScan.findByIdAndDelete(id);
@@ -557,12 +672,24 @@ function generateToken(user) {
 }
 
 function setAuthCookie(res, token) {
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
   res.cookie('token', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
   });
+}
+
+function clearAuthCookie(res) {
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+  const opts = {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax'
+  };
+  res.clearCookie('token', opts);
+  res.clearCookie('trustmatrix_token', opts);
 }
 
 async function authenticate(req, res, next) {
@@ -611,6 +738,11 @@ async function authenticate(req, res, next) {
       };
     }
 
+    if (user && user.blocked) {
+      req.user = null;
+      return next();
+    }
+
     req.user = user || null;
     next();
   } catch (err) {
@@ -645,7 +777,7 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 app.patch('/api/users/me', authenticate, requireAuth, async (req, res) => {
   try {
     const patch = req.body || {};
-    const allowed = ['name', 'phone', 'language', 'theme', 'avatar'];
+    const allowed = ['name', 'phone', 'language', 'theme', 'avatar', 'notificationPrefs', 'state'];
     const update = {};
     for (const key of allowed) {
       if (patch[key] !== undefined) update[key] = patch[key];
@@ -672,10 +804,22 @@ app.patch('/api/users/me', authenticate, requireAuth, async (req, res) => {
 // PATCH /api/users/me/password
 app.all(['/api/users/me/password', '/api/users/password'], authenticate, requireAuth, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body || {};
-    if (!newPassword) return res.status(400).json({ error: 'New password required' });
+    const { current, currentPassword, next, newPassword } = req.body || {};
+    const currPw = currentPassword || current;
+    const nextPw = newPassword || next;
+    if (!nextPw) return res.status(400).json({ error: 'New password required' });
+
+    if (req.user.password && currPw) {
+      const matches = req.user.password.startsWith('$2')
+        ? await bcrypt.compare(currPw, req.user.password)
+        : req.user.password === currPw;
+      if (!matches) {
+        return res.status(400).json({ message: 'wrongPassword', error: 'Current password is incorrect' });
+      }
+    }
+
     const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(newPassword, salt);
+    const hash = await bcrypt.hash(nextPw, salt);
     if (isMongoConnected && req.user._id) {
       await User.updateOne({ _id: req.user._id }, { $set: { password: hash } });
     }
@@ -697,7 +841,7 @@ app.delete('/api/users/me', authenticate, requireAuth, async (req, res) => {
     }
     const cleanEmail = (req.user.email || '').toLowerCase().trim();
     if (cleanEmail) MEMORY_USERS.delete(cleanEmail);
-    res.clearCookie('token');
+    clearAuthCookie(res);
     res.json({ success: true, message: 'Account deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete account' });
@@ -828,6 +972,10 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'invalidCredentials', error: 'Invalid email or password' });
     }
 
+    if (user.blocked) {
+      return res.status(403).json({ error: 'This account has been blocked by an administrator.' });
+    }
+
     // Check if the user is an admin or demo user
     const isAdminUser = user.role === 'admin' || cleanEmail === 'admin@trustmatrix.in';
     const isDemoUser = cleanEmail === 'user@trustmatrix.in';
@@ -847,6 +995,12 @@ app.post('/api/auth/login', async (req, res) => {
 
     // Dispatch MFA OTP to email for normal users
     const otpResult = await sendOtp(cleanEmail, 'mfa', { user });
+
+    if (!otpResult.emailSent) {
+      return res.status(503).json({
+        error: 'Email verification service is currently unavailable on the server. Please use "Continue with Google" or ask the administrator to configure SMTP credentials.'
+      });
+    }
 
     console.log(`🛡️ [MFA Security] Login MFA triggered for registered user ${cleanEmail}. Waiting for 6-digit OTP...`);
     res.json({
@@ -897,6 +1051,12 @@ app.post('/api/auth/register', async (req, res) => {
       phone: phone || null,
       language: language || 'en'
     });
+
+    if (!otpResult.emailSent) {
+      return res.status(503).json({
+        error: 'Email verification service is currently unavailable on the server. Please use "Sign up with Google" or configure server SMTP settings.'
+      });
+    }
 
     console.log(`📝 [Registration] Signup verification code dispatched to ${cleanEmail}`);
     res.json({
@@ -1088,8 +1248,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 // POST /api/auth/logout
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('token');
-  res.clearCookie('trustmatrix_token');
+  clearAuthCookie(res);
   res.json({ success: true });
 });
 
@@ -1101,10 +1260,13 @@ app.get('/api/verify/company', async (req, res) => {
     res.json({
       name: result.claimedCompany,
       cin: result.cin || 'N/A',
-      status: result.cin ? 'active' : 'not_found',
-      incorporated: '2016-04-12',
-      state: 'India',
-      nameMatch: !!result.cin
+      isin: result.isin || null,
+      nseSymbol: result.nseSymbol || null,
+      registrySource: result.registrySource || null,
+      status: result.isLegitimateRegisteredEntity ? 'active' : 'not_found',
+      incorporated: result.incorporated || null,
+      state: result.roc || 'India',
+      nameMatch: !!result.isLegitimateRegisteredEntity
     });
   } catch (err) {
     res.json({ name: req.query.name, status: 'not_found' });
@@ -1241,12 +1403,14 @@ app.get('/api/stats/threats', async (req, res) => {
   }
 });
 
-// 10. Live Telegram Monitor Sessions
-app.get('/api/live/sessions', (req, res) => {
+// 10. Live Telegram Monitor Sessions (User-scoped deep links)
+app.get('/api/live/sessions', authenticate, (req, res) => {
+  const { userId } = getUserIdentity(req.user);
+  const tag = userId || 'guest';
   res.json({
     connected: true,
     botUsername: 'CyberShieldLiveBot',
-    deepLink: 'https://t.me/CyberShieldLiveBot?start=u_1001',
+    deepLink: `https://t.me/CyberShieldLiveBot?start=${tag}`,
     sessions: [
       {
         id: 'ls_1',
@@ -1266,11 +1430,13 @@ app.get('/api/live/sessions', (req, res) => {
   });
 });
 
-app.post('/api/live/connect-telegram', (req, res) => {
+app.post('/api/live/connect-telegram', authenticate, (req, res) => {
+  const { userId } = getUserIdentity(req.user);
+  const tag = userId || 'guest';
   res.json({
     connected: true,
     botUsername: 'CyberShieldLiveBot',
-    deepLink: 'https://t.me/CyberShieldLiveBot?start=u_1001',
+    deepLink: `https://t.me/CyberShieldLiveBot?start=${tag}`,
     connectedAt: new Date().toISOString()
   });
 });
@@ -1351,39 +1517,91 @@ app.get('/api/headlines/active', (req, res) => {
   res.json(ACTIVE_HEADLINES_DATA);
 });
 
-app.get('/api/admin/headlines', (req, res) => {
+app.get('/api/admin/headlines', authenticate, requireAdmin, (req, res) => {
   res.json(ACTIVE_HEADLINES_DATA);
 });
 
-let NOTIFICATIONS_LIST = [
+const GLOBAL_ADMIN_ALERTS = [
   {
     id: 'n1',
     type: 'admin_alert',
     title: 'New High-Risk Threat Detected',
     body: 'Multiple complaints filed against UPI ID earnfast92@okaxis.',
-    read: false,
     createdAt: new Date(Date.now() - 15 * 60000).toISOString()
   }
 ];
 
-app.get('/api/notifications', (req, res) => {
-  res.json({ items: NOTIFICATIONS_LIST });
+function getNotificationsForUser(user) {
+  const { userId } = getUserIdentity(user);
+  const readSet = GLOBAL_ALERT_READ_BY.get(userId) || new Set();
+  const globals = GLOBAL_ADMIN_ALERTS.map(a => ({
+    ...a,
+    read: readSet.has(a.id)
+  }));
+  const personal = USER_NOTIFICATIONS.get(userId) || [];
+  return [...personal, ...globals].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+app.get('/api/notifications', authenticate, requireAuth, (req, res) => {
+  res.json({ items: getNotificationsForUser(req.user) });
 });
 
-app.all(['/api/notifications/read-all', '/api/notifications/mark-all-read'], (req, res) => {
-  NOTIFICATIONS_LIST = NOTIFICATIONS_LIST.map(n => ({ ...n, read: true }));
-  res.json({ success: true, items: NOTIFICATIONS_LIST });
+app.all(['/api/notifications/read-all', '/api/notifications/mark-all-read'], authenticate, requireAuth, (req, res) => {
+  const { userId } = getUserIdentity(req.user);
+  const readSet = GLOBAL_ALERT_READ_BY.get(userId) || new Set();
+  GLOBAL_ADMIN_ALERTS.forEach(a => readSet.add(a.id));
+  GLOBAL_ALERT_READ_BY.set(userId, readSet);
+  const personal = (USER_NOTIFICATIONS.get(userId) || []).map(n => ({ ...n, read: true }));
+  USER_NOTIFICATIONS.set(userId, personal);
+  res.json({ success: true, items: getNotificationsForUser(req.user) });
 });
 
-app.all('/api/notifications/:id/read', (req, res) => {
+app.all('/api/notifications/:id/read', authenticate, requireAuth, (req, res) => {
   const { id } = req.params;
-  const item = NOTIFICATIONS_LIST.find(n => n.id === id);
-  if (item) item.read = true;
+  const { userId } = getUserIdentity(req.user);
+  const personal = USER_NOTIFICATIONS.get(userId) || [];
+  const item = personal.find(n => n.id === id);
+  if (item) {
+    item.read = true;
+  } else {
+    const readSet = GLOBAL_ALERT_READ_BY.get(userId) || new Set();
+    readSet.add(id);
+    GLOBAL_ALERT_READ_BY.set(userId, readSet);
+  }
   res.json({ success: true, item: item || { id, read: true } });
 });
 
-app.get('/api/uploads', (req, res) => {
-  res.json({ items: [], total: 0 });
+app.get('/api/uploads', authenticate, requireAuth, async (req, res) => {
+  try {
+    const scans = await fetchUserScans(req.user, {});
+    const allFiles = [];
+    for (const s of scans) {
+      if (Array.isArray(s.files)) {
+        for (const f of s.files) {
+          allFiles.push({
+            id: f.id,
+            scanId: s.id,
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            verdict: s.verdict,
+            createdAt: s.createdAt
+          });
+        }
+      }
+    }
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 24;
+    res.json({
+      items: allFiles.slice((page - 1) * limit, page * limit),
+      page,
+      pages: Math.max(1, Math.ceil(allFiles.length / limit)),
+      total: allFiles.length,
+      hasMore: page * limit < allFiles.length
+    });
+  } catch (err) {
+    res.json({ items: [], total: 0 });
+  }
 });
 
 // 12. Full Admin Suite (Overview, Users, Admin Scans, Entities Scam Database, Benchmark, Broadcast)
@@ -1414,7 +1632,7 @@ let adminEntitiesList = [
 
 let adminBroadcasts = [];
 
-app.get('/api/admin/overview', async (req, res) => {
+app.get('/api/admin/overview', authenticate, requireAdmin, async (req, res) => {
   try {
     let count = isMongoConnected ? await ThreatScan.countDocuments() : inMemoryScans.length;
     let scansList = isMongoConnected ? await ThreatScan.find().sort({ createdAt: -1 }).limit(10) : inMemoryScans.slice(0, 10);
@@ -1457,38 +1675,68 @@ app.get('/api/admin/overview', async (req, res) => {
   }
 });
 
-app.get('/api/admin/users', async (req, res) => {
+app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
     const q = (req.query.q || '').toLowerCase();
-    const page = parseInt(req.query.page) || 1;
+    const page = parseInt(req.query.page, 10) || 1;
     const limit = 10;
 
-    let usersList = [];
+    // Aggregate real scan counts per userId / userEmail
+    const scanCounts = new Map();
+    const allScans = isMongoConnected
+      ? await ThreatScan.find({}, 'userId userEmail').lean()
+      : inMemoryScans;
+    for (const s of allScans) {
+      if (s.userId) scanCounts.set(s.userId, (scanCounts.get(s.userId) || 0) + 1);
+      if (s.userEmail) scanCounts.set(s.userEmail.toLowerCase(), (scanCounts.get(s.userEmail.toLowerCase()) || 0) + 1);
+    }
+
+    const byEmail = new Map();
     if (isMongoConnected) {
       try {
         const dbUsers = await User.find({}).sort({ createdAt: -1 });
-        usersList = dbUsers.map((u) => ({
-          id: u._id.toString(),
-          name: u.name,
-          email: u.email,
-          phone: u.phone || '+91 98000 00000',
-          role: u.role || 'user',
-          state: 'Online',
-          scans: 0,
-          blocked: false,
-          provider: u.provider || 'local',
-          createdAt: u.createdAt ? u.createdAt.toISOString() : new Date().toISOString()
-        }));
+        for (const u of dbUsers) {
+          const emailKey = u.email.toLowerCase().trim();
+          const uid = u._id.toString();
+          byEmail.set(emailKey, {
+            id: uid,
+            name: u.name,
+            email: u.email,
+            phone: u.phone || '—',
+            role: u.role || 'user',
+            state: u.state || 'India',
+            scans: scanCounts.get(uid) || scanCounts.get(emailKey) || 0,
+            blocked: !!u.blocked,
+            provider: u.provider || 'local',
+            createdAt: u.createdAt ? u.createdAt.toISOString() : new Date().toISOString()
+          });
+        }
       } catch (err) {
         console.warn('MongoDB admin users fetch error:', err.message);
       }
     }
 
-    if (usersList.length === 0) {
-      usersList = adminUsersList;
+    // Merge all runtime MEMORY_USERS (registered/logged in during this session)
+    for (const [emailKey, u] of MEMORY_USERS.entries()) {
+      if (!byEmail.has(emailKey)) {
+        const uid = u._id ? u._id.toString() : u.id;
+        byEmail.set(emailKey, {
+          id: uid,
+          name: u.name,
+          email: u.email,
+          phone: u.phone || '—',
+          role: u.role || 'user',
+          state: u.state || 'India',
+          scans: scanCounts.get(uid) || scanCounts.get(emailKey) || 0,
+          blocked: !!u.blocked,
+          provider: u.provider || 'local',
+          createdAt: u.createdAt || new Date().toISOString()
+        });
+      }
     }
 
-    let filtered = usersList.filter(u => `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(q));
+    const usersList = Array.from(byEmail.values());
+    const filtered = usersList.filter(u => `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(q));
     res.json({
       items: filtered.slice((page - 1) * limit, page * limit),
       page,
@@ -1501,29 +1749,60 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-app.patch('/api/admin/users/:id', (req, res) => {
-  const u = adminUsersList.find(x => x.id === req.params.id);
-  if (u) {
-    Object.assign(u, req.body);
-    return res.json(u);
+app.patch('/api/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const patch = {};
+    if (req.body.role !== undefined) patch.role = req.body.role;
+    if (req.body.blocked !== undefined) patch.blocked = !!req.body.blocked;
+
+    let updated = null;
+    if (isMongoConnected && mongoose.Types.ObjectId.isValid(id)) {
+      const dbUser = await User.findByIdAndUpdate(id, { $set: patch }, { new: true });
+      if (dbUser) updated = sanitizeUser(dbUser);
+    }
+
+    for (const u of MEMORY_USERS.values()) {
+      const uid = u._id ? u._id.toString() : u.id;
+      if (uid === id) {
+        Object.assign(u, patch);
+        if (!updated) updated = sanitizeUser(u);
+      }
+    }
+
+    const staticU = adminUsersList.find(x => x.id === id);
+    if (staticU) {
+      Object.assign(staticU, patch);
+      if (!updated) updated = staticU;
+    }
+
+    if (updated) return res.json(updated);
+    res.status(404).json({ message: "User not found" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update user" });
   }
-  res.status(404).json({ message: "User not found" });
 });
 
-app.get('/api/admin/scans', async (req, res) => {
+app.get('/api/admin/scans', authenticate, requireAdmin, async (req, res) => {
   try {
     let items = [];
     if (isMongoConnected) {
-      const records = await ThreatScan.find().sort({ createdAt: -1 }).limit(100);
+      const records = await ThreatScan.find().sort({ createdAt: -1 }).limit(200);
       items = records.map(r => adaptScanForFrontend(r));
     } else {
       items = inMemoryScans.map(r => adaptScanForFrontend(r));
     }
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
     const q = (req.query.q || '').toLowerCase();
+    const userFilter = req.query.user || '';
+    const verdictFilter = req.query.verdict || '';
+    const typeFilter = req.query.type || '';
+    if (userFilter) items = items.filter(s => s.userId === userFilter);
+    if (verdictFilter) items = items.filter(s => s.verdict === verdictFilter);
+    if (typeFilter) items = items.filter(s => s.type === typeFilter);
     if (q) {
-      items = items.filter(s => `${s.id} ${s.extractedText} ${s.verdict}`.toLowerCase().includes(q));
+      items = items.filter(s => `${s.id} ${s.extractedText} ${s.verdict} ${s.company?.name || ''}`.toLowerCase().includes(q));
     }
     const total = items.length;
     res.json({
@@ -1538,7 +1817,7 @@ app.get('/api/admin/scans', async (req, res) => {
   }
 });
 
-app.get('/api/admin/entities', (req, res) => {
+app.get('/api/admin/entities', authenticate, requireAdmin, (req, res) => {
   const { q = '', type } = req.query;
   let list = adminEntitiesList;
   if (type) list = list.filter(e => e.type === type);
@@ -1546,7 +1825,7 @@ app.get('/api/admin/entities', (req, res) => {
   res.json(list);
 });
 
-app.post('/api/admin/entities', (req, res) => {
+app.post('/api/admin/entities', authenticate, requireAdmin, (req, res) => {
   const item = {
     id: `ent_${Date.now()}`,
     reports: 1,
@@ -1559,7 +1838,7 @@ app.post('/api/admin/entities', (req, res) => {
   res.json(item);
 });
 
-app.put('/api/admin/entities/:id', (req, res) => {
+app.put('/api/admin/entities/:id', authenticate, requireAdmin, (req, res) => {
   const item = adminEntitiesList.find(e => e.id === req.params.id);
   if (item) {
     Object.assign(item, req.body);
@@ -1568,12 +1847,12 @@ app.put('/api/admin/entities/:id', (req, res) => {
   res.status(404).json({ message: "Entity not found" });
 });
 
-app.delete('/api/admin/entities/:id', (req, res) => {
+app.delete('/api/admin/entities/:id', authenticate, requireAdmin, (req, res) => {
   adminEntitiesList = adminEntitiesList.filter(e => e.id !== req.params.id);
   res.json({ ok: true, id: req.params.id });
 });
 
-app.post('/api/admin/evaluate', upload.any(), (req, res) => {
+app.post('/api/admin/evaluate', authenticate, requireAdmin, upload.any(), (req, res) => {
   try {
     let rowsToEvaluate = [];
 
@@ -1717,10 +1996,10 @@ app.post('/api/admin/evaluate', upload.any(), (req, res) => {
   }
 });
 
-app.post('/api/admin/broadcast', (req, res) => {
+app.post('/api/admin/broadcast', authenticate, requireAdmin, (req, res) => {
   const item = {
     id: `b_${Date.now()}`,
-    sentBy: 'Daksh Verma (Admin)',
+    sentBy: req.user?.name ? `${req.user.name} (Admin)` : 'Admin',
     createdAt: new Date().toISOString(),
     reach: 48210,
     ...req.body
@@ -1729,7 +2008,7 @@ app.post('/api/admin/broadcast', (req, res) => {
   res.json(item);
 });
 
-app.get('/api/admin/broadcast', (req, res) => {
+app.get('/api/admin/broadcast', authenticate, requireAdmin, (req, res) => {
   res.json(adminBroadcasts);
 });
 
@@ -1746,8 +2025,27 @@ const LIVE_TELEGRAM_SCRIPT = [
   { from: 'Receptionist_Kavya', text: 'To withdraw ₹24,600 you must pay 18% income tax ₹4,428 first. Only 30 mins left!', level: 'dangerous', risk: 97, stage: 5 },
 ];
 
+io.use((socket, next) => {
+  try {
+    const authHeader = socket.handshake.headers?.authorization;
+    const token =
+      socket.handshake.auth?.token ||
+      (authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null);
+    if (token) {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      socket.user = decoded;
+    }
+  } catch (e) {
+    socket.user = null;
+  }
+  next();
+});
+
 io.on('connection', (socket) => {
-  console.log(`🔌 [Socket.io] Client connected: ${socket.id}`);
+  if (socket.user?.id) {
+    socket.join(`user:${socket.user.id}`);
+  }
+  console.log(`🔌 [Socket.io] Client connected: ${socket.id}${socket.user ? ` (user: ${socket.user.email})` : ''}`);
   let liveTimer = null;
   let liveIndex = 0;
   let lastStage = -1;

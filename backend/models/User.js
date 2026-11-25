@@ -42,6 +42,22 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: 'en'
   },
+  state: {
+    type: String,
+    default: 'India'
+  },
+  blocked: {
+    type: Boolean,
+    default: false
+  },
+  theme: {
+    type: String,
+    default: null
+  },
+  notificationPrefs: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
   createdAt: {
     type: Date,
     default: Date.now

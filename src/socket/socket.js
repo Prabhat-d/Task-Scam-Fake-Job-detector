@@ -20,6 +20,13 @@ export function connectSocket() {
     : io(SOCKET_URL, {
         withCredentials: true,
         autoConnect: false,
+        auth: (cb) => {
+          try {
+            cb({ token: localStorage.getItem('token') || '' });
+          } catch {
+            cb({});
+          }
+        },
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: 5,

@@ -34,8 +34,8 @@ export default function Dashboard() {
   const headlines = useHeadlineStore((s) => s.headlines);
   const notifications = useNotificationStore((s) => s.items);
 
-  const scans = useAsync(() => scansService.list({ limit: 500 }), []);
-  const live = useAsync(() => liveService.sessions(), []);
+  const scans = useAsync(() => scansService.list({ limit: 500 }), [user?.id]);
+  const live = useAsync(() => liveService.sessions(), [user?.id]);
   const items = useMemo(() => scans.data?.items || [], [scans.data]);
 
   const kpi = useMemo(

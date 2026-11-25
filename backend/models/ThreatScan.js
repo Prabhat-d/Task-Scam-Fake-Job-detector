@@ -7,6 +7,18 @@ const ThreatScanSchema = new mongoose.Schema({
     unique: true,
     default: () => `SCAN-${Math.floor(100000 + Math.random() * 900000)}`
   },
+  userId: {
+    type: String,
+    index: true,
+    default: 'anonymous'
+  },
+  userEmail: {
+    type: String,
+    index: true,
+    lowercase: true,
+    trim: true,
+    default: null
+  },
   timestamp: {
     type: Date,
     default: Date.now
@@ -41,10 +53,30 @@ const ThreatScanSchema = new mongoose.Schema({
   },
   companyVerification: {
     claimedCompany: String,
+    companyName: String,
     detectedDomain: String,
+    domainChecked: String,
+    officialDomain: String,
+    hrEmail: String,
+    cin: String,
+    isin: String,
+    nseSymbol: String,
+    incorporated: String,
+    registrySource: String,
+    roc: String,
     isOfficialDomain: Boolean,
+    isLegitimateRegisteredEntity: Boolean,
+    isFreeMailProvider: Boolean,
+    domainMismatch: Boolean,
+    liveDnsVerified: Boolean,
+    mxValid: Boolean,
     mcaStatus: String
   },
+  files: [{
+    name: String,
+    size: Number,
+    mimetype: String
+  }],
   redFlags: [{
     type: String
   }],

@@ -5,6 +5,7 @@ export default function GoogleAuthButton({ onAuthSuccess, mode = 'login' }) {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   const login = useGoogleLogin({
+    prompt: 'select_account',
     onSuccess: async (tokenResponse) => {
       try {
         // Fetch verified user profile directly from Google servers

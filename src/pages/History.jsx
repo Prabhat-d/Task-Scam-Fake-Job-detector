@@ -17,10 +17,13 @@ import { uploadsService } from '../services/uploadsService.js';
 import { formatDateTime, formatBytes } from '../utils/formatters.js';
 import { VERDICTS, SCAN_TYPES } from '../utils/constants.js';
 
+import { useAuthStore } from '../store/authStore.js';
+
 const FILTERS0 = { verdict: '', type: '', from: '', to: '', q: '' };
 
 export default function History() {
   const { t, i18n } = useTranslation();
+  const userId = useAuthStore((s) => s.user?.id);
   const [view, setView] = useState('list');
   const [filters, setFilters] = useState(FILTERS0);
   const [q, setQ] = useState('');
@@ -43,7 +46,7 @@ export default function History() {
 
   const req = useAsync(
     () => (view === 'list' ? scansService.list({ ...filters, page, limit: 10 }) : uploadsService.list({ page, limit: 24 })),
-    [view, filters, page]
+    [view, filters, page, userId]
   );
 
   // Append pages for "load more".

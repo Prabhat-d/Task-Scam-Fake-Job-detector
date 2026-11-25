@@ -184,63 +184,86 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   // Intelligent Deterministic Heuristic Fallback Engine
   const lowerText = textContent.toLowerCase();
 
+  // Cross check MCA/NSE corporate registry on fallback first
+  const companyMatch = textContent.match(/(?:company|from|at|join|with)\s*[:\-]?\s*([A-Z][A-Za-z0-9\s&\.]{2,40})/);
+  const guessedCompany = companyMatch ? companyMatch[1].trim() : (phones[0] ? 'Unverified Recruiter' : 'Online Task Merchant');
+  const mcaFallback = await verifyCompanyAgainstMCA(guessedCompany, textContent);
+
   const isScam =
-    lowerText.includes('like youtube') ||
-    lowerText.includes('registration fee') ||
+    /lik(?:e|ing)\s+youtube|youtube\s+(?:like|video)|per\s+like|like\s+and\s+earn/i.test(lowerText) ||
+    /(?:registration|processing|training|onboarding|courier|document)\s*(?:fee|charge|deposit)/i.test(lowerText) ||
+    /(?:laptop|hardware|workstation|equipment)\s*(?:security|insurance|deposit)/i.test(lowerText) ||
     lowerText.includes('prepaid') ||
     lowerText.includes('combo task') ||
     lowerText.includes('unfreeze') ||
-    lowerText.includes('deposit') ||
     lowerText.includes('vip group') ||
-    (lowerText.includes('earn') && lowerText.includes('per like')) ||
-    (lowerText.includes('t.me') && lowerText.includes('earn'));
+    lowerText.includes('merchant task') ||
+    /deposit\s*(?:money|rs|₹|\d)/i.test(lowerText) ||
+    (lowerText.includes('earn') && (lowerText.includes('daily') || lowerText.includes('per day') || lowerText.includes('telegram') || lowerText.includes('t.me'))) ||
+    (mcaFallback.domainMismatch && mcaFallback.isFreeMailProvider);
 
   const isSuspicious =
-    lowerText.includes('whatsapp') ||
-    lowerText.includes('comment #') ||
-    lowerText.includes('typing work') ||
-    lowerText.includes('data entry') ||
-    lowerText.includes('urgent requirement');
+    !isScam && (
+      lowerText.includes('whatsapp') ||
+      lowerText.includes('telegram') ||
+      lowerText.includes('t.me') ||
+      lowerText.includes('comment #') ||
+      lowerText.includes('typing work') ||
+      lowerText.includes('data entry') ||
+      lowerText.includes('urgent requirement') ||
+      mcaFallback.domainMismatch ||
+      mcaFallback.isFreeMailProvider
+    );
 
   const verdict = isScam ? 'CRITICAL_SCAM' : (isSuspicious ? 'SUSPICIOUS' : 'GENUINE_OFFER');
-  const riskScore = isScam ? 92 : (isSuspicious ? 65 : 8);
+  const riskScore = isScam ? 92 : (isSuspicious ? 65 : (mcaFallback.isOfficialDomain ? 5 : 12));
 
   const fallbackRedFlags = [];
   if (isScam) {
-    if (lowerText.includes('like youtube') || lowerText.includes('per like')) fallbackRedFlags.push("Unrealistic daily earnings for simple digital tasks ('Like YouTube videos')");
-    if (lowerText.includes('prepaid') || lowerText.includes('deposit') || lowerText.includes('fee')) fallbackRedFlags.push("Demand for advance payment, deposit, or prepaid merchant tasks");
-    if (lowerText.includes('t.me') || lowerText.includes('telegram')) fallbackRedFlags.push("Directing candidate to encrypted messaging channel (Telegram) to evade moderation");
+    if (/lik(?:e|ing)\s+youtube|youtube\s+video|per\s+like|earn.*daily/i.test(lowerText)) {
+      fallbackRedFlags.push("Unrealistic daily earnings promised for simple digital engagement tasks");
+    }
+    if (/prepaid|deposit|fee|charge|insurance|combo task|unfreeze/i.test(lowerText)) {
+      fallbackRedFlags.push("Demand for advance fee, security deposit, or prepaid merchant task payment");
+    }
+    if (lowerText.includes('t.me') || lowerText.includes('telegram')) {
+      fallbackRedFlags.push("Directing candidate to encrypted Telegram channel to evade moderation");
+    }
+    if (mcaFallback.domainMismatch) {
+      fallbackRedFlags.push(mcaFallback.mcaStatus);
+    }
   } else if (isSuspicious) {
-    fallbackRedFlags.push("Unofficial communication channel or third-party proxy recruitment bait");
+    if (mcaFallback.domainMismatch || mcaFallback.isFreeMailProvider) {
+      fallbackRedFlags.push(mcaFallback.mcaStatus);
+    } else {
+      fallbackRedFlags.push("Unofficial communication channel or third-party proxy recruitment bait");
+    }
   }
-
-  // Cross check MCA corporate registry on fallback as well
-  const mcaFallback = await verifyCompanyAgainstMCA(phones[0] ? 'Unverified Recruiter' : 'Online Task Merchant', textContent);
 
   return {
     multiAgentConsensus: {
       engineA: "Deterministic Forensic Matcher",
       engineB: "Stage Progression Machine",
       consensusScore: riskScore,
-      liveDnsAudit: mcaFallback.liveDnsVerified ? "Passed (Active MX Mail Server)" : "Flagged / Mismatch"
+      liveDnsAudit: mcaFallback.liveDnsVerified ? "Passed (Active MX Mail Server)" : (verdict === 'GENUINE_OFFER' ? "Standard Check" : "Flagged / Mismatch")
     },
     riskScore,
     verdict,
-    category: isScam ? "Prepaid Task Scam / Financial Fraud" : (isSuspicious ? "Unofficial Proxy Recruitment Bait" : "Standard Job Listing"),
+    category: isScam ? "Prepaid Task Scam / Financial Fraud" : (isSuspicious ? "Unofficial Proxy Recruitment Bait" : "Authentic Corporate Career Posting"),
     extractedText: textContent,
     scamStage: {
       currentStage: isScam ? 1 : 0,
       stageName: isScam ? "Stage 1: Engagement Bait / Task Funnel" : "Safe / Verified Opportunity",
-      stageDescription: isScam ? "Digital task scam funneling users into prepaid deposits." : "Standard career communication pattern.",
+      stageDescription: isScam ? "Digital task scam funneling users into prepaid deposits." : "Standard career communication pattern with no financial demands.",
       predictedNextMove: isScam
         ? "The perpetrator will pay small trial payouts, then transition to prepaid merchant tasks requiring escalating deposits to unfreeze money."
         : "Proceed through official verified company portals."
     },
     behavioralAnalysis: isScam
-      ? "Uses low-barrier engagement lures (likes, ratings) to build compliance before introducing financial deposits."
-      : "Standard communication pattern.",
+      ? "Uses low-barrier engagement lures or advance-fee pretexts before escalating financial demands."
+      : "Standard career communication pattern.",
     companyVerification: mcaFallback,
-    redFlags: fallbackRedFlags.length > 0 ? fallbackRedFlags : ["Unverified recruitment solicitation"],
+    redFlags: fallbackRedFlags,
     dossier1930: isScam ? {
       phoneNumbers: phones.length > 0 ? phones : ["Extracted from text"],
       telegramHandles: telegramHandles.length > 0 ? telegramHandles : ["None"],

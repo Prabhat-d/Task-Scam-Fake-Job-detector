@@ -20,11 +20,12 @@ export default function ThreatMap() {
   const { t, i18n } = useTranslation();
   const { data, loading, error, reload, setData } = useAsync(() => statsService.threats(), []);
   const [feed, setFeed] = useState([]);
+  const [selectedState, setSelectedState] = useState(null);
   const [, tick] = useState(0);
 
   useEffect(() => {
-    if (data?.feed && !feed.length) setFeed(data.feed);
-  }, [data, feed.length]);
+    if (data?.feed) setFeed(data.feed);
+  }, [data?.feed]);
 
   // Re-render "x min ago" labels every 30s.
   useEffect(() => {
@@ -33,13 +34,20 @@ export default function ThreatMap() {
   }, []);
 
   useSocketEvent('threat:new', (item) => {
-    setFeed((prev) => [item, ...prev].slice(0, 12));
+    setFeed((prev) => [item, ...prev.filter((x) => x.id !== item.id)].slice(0, 12));
     setData((d) =>
       d
         ? {
             ...d,
-            counters: { ...d.counters, scamsToday: d.counters.scamsToday + 1, reportsFiled: d.counters.reportsFiled + (Math.random() < 0.3 ? 1 : 0) },
+            counters: {
+              ...d.counters,
+              scamsToday: d.counters.scamsToday + 1,
+              reportsFiled: d.counters.reportsFiled + (item.verdict === 'scam' || item.verdict === 'CRITICAL_SCAM' ? 1 : 0),
+            },
             states: d.states.map((s) => (s.code === item.state ? { ...s, count: s.count + 1 } : s)),
+            cities: d.cities
+              .map((c) => (c.city === item.city ? { ...c, count: c.count + 1 } : c))
+              .sort((a, b) => b.count - a.count),
             hourly: d.hourly.map((h, i) => (i === d.hourly.length - 1 ? { ...h, scams: h.scams + 1 } : h)),
           }
         : d
@@ -83,11 +91,22 @@ export default function ThreatMap() {
               <Skeleton className="h-[380px]" />
             ) : (
               <div className="grid md:grid-cols-3 gap-6">
-                <div className="md:col-span-2"><ThreatMapTiles states={data.states} /></div>
+                <div className="md:col-span-2">
+                  <ThreatMapTiles states={data.states} selectedState={selectedState} onSelectState={setSelectedState} />
+                </div>
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-subtle mb-2">{t('threat.topCities')}</p>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-subtle">
+                      {selectedState ? `${t('threat.topCities')} (${selectedState})` : t('threat.topCities')}
+                    </p>
+                    {selectedState && (
+                      <button type="button" onClick={() => setSelectedState(null)} className="text-[11px] font-medium text-primary hover:underline">
+                        All India
+                      </button>
+                    )}
+                  </div>
                   <ol className="space-y-2">
-                    {data.cities.map((c, i) => (
+                    {(selectedState ? data.cities.filter((c) => c.state === selectedState) : data.cities.slice(0, 8)).map((c, i) => (
                       <li key={c.city} className="flex items-center gap-2 text-sm">
                         <span className="mono text-xs text-subtle w-4">{i + 1}</span>
                         <span className="flex-1 text-heading">{c.city}</span>

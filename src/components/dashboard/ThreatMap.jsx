@@ -22,7 +22,7 @@ function scale(t) {
  * where it sits on the map, so small states stay readable on mobile.
  * states: [{ code, name, x, y, count }]
  */
-export default function ThreatMap({ states = [] }) {
+export default function ThreatMap({ states = [], selectedState = null, onSelectState = null }) {
   const { t, i18n } = useTranslation();
   const [hover, setHover] = useState(null);
   const max = useMemo(() => Math.max(1, ...states.map((s) => s.count)), [states]);
@@ -38,20 +38,24 @@ export default function ThreatMap({ states = [] }) {
           const c = scale(s.count / max);
           const x = s.x * (SIZE + GAP);
           const y = s.y * (SIZE + GAP);
-          const active = hover?.code === s.code;
+          const isSelected = selectedState === s.code;
+          const active = hover?.code === s.code || isSelected;
           return (
             <g
               key={s.code}
               tabIndex={0}
               role="button"
+              aria-pressed={isSelected}
               aria-label={`${s.name}: ${formatNumber(s.count, i18n.language)}`}
+              onClick={() => onSelectState?.(isSelected ? null : s.code)}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onSelectState?.(isSelected ? null : s.code))}
               onMouseEnter={() => setHover(s)}
               onMouseLeave={() => setHover(null)}
               onFocus={() => setHover(s)}
               onBlur={() => setHover(null)}
               className="cursor-pointer outline-none"
             >
-              <rect x={x} y={y} width={SIZE} height={SIZE} rx={8} fill={c.fill} stroke={active ? '#3b82f6' : 'rgba(15,23,42,0.08)'} strokeWidth={active ? 3 : 1} />
+              <rect x={x} y={y} width={SIZE} height={SIZE} rx={8} fill={c.fill} stroke={isSelected ? '#2563eb' : (active ? '#3b82f6' : 'rgba(15,23,42,0.08)')} strokeWidth={active ? 3 : 1} />
               <text x={x + SIZE / 2} y={y + 22} textAnchor="middle" fontSize="13" fontWeight="700" fill={c.text} fontFamily="Inter">{s.code}</text>
               <text x={x + SIZE / 2} y={y + 38} textAnchor="middle" fontSize="10" fill={c.text} opacity=".85" fontFamily="JetBrains Mono">{s.count}</text>
             </g>

@@ -178,15 +178,97 @@ function extractIncorpDateFromEntry(entry) {
 /**
  * Search corporate registry by company name, query keywords, or detected email domain
  */
-function findCompanyInRegistry(claimedCompany, detectedDomain) {
-  const cleanName = (claimedCompany || "").toLowerCase().trim();
+const GENERIC_CLAIMED_NAMES = new Set([
+  'online task merchant',
+  'unverified recruiter',
+  'unspecified entity',
+  'unknown',
+  'unknown company',
+  'n/a',
+  'none'
+]);
 
-  // 1. Direct match on domain
-  if (detectedDomain && domainIndex.has(detectedDomain)) {
-    return domainIndex.get(detectedDomain);
+const NON_CORPORATE_URL_HOSTS = new Set([
+  'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'rb.gy', 'shorturl.at',
+  'forms.gle', 'docs.google.com', 'drive.google.com', 'sites.google.com',
+  't.me', 'telegram.me', 'wa.me', 'chat.whatsapp.com', 'whatsapp.com',
+  'linkedin.com', 'naukri.com', 'indeed.com', 'glassdoor.com', 'foundit.in',
+  'monsterindia.com', 'internshala.com', 'unstop.com', 'shine.com', 'timesjobs.com',
+  'youtube.com', 'youtu.be', 'instagram.com', 'facebook.com', 'twitter.com', 'x.com',
+  'reallygreatsite.com', 'canva.com', 'google.com', 'maps.google.com', 'apple.com'
+]);
+
+function isSameOrSubdomain(candidate, official) {
+  if (!candidate || !official) return false;
+  const c = candidate.toLowerCase().trim().replace(/^www\./, '');
+  const o = official.toLowerCase().trim().replace(/^www\./, '');
+  return c === o || c.endsWith(`.${o}`);
+}
+
+function isPlatformHost(host) {
+  if (!host) return true;
+  for (const blocked of NON_CORPORATE_URL_HOSTS) {
+    if (isSameOrSubdomain(host, blocked)) return true;
+  }
+  return false;
+}
+
+function lookupDomainInIndex(detectedDomain) {
+  if (!detectedDomain) return null;
+  const clean = detectedDomain.toLowerCase().trim().replace(/^www\./, '');
+  if (domainIndex.has(clean)) return domainIndex.get(clean);
+
+  const parts = clean.split('.');
+  for (let i = 1; i < parts.length - 1; i++) {
+    const parent = parts.slice(i).join('.');
+    if (domainIndex.has(parent)) return domainIndex.get(parent);
   }
 
-  // 2. Direct exact alias or exact NSE ticker symbol match
+  for (const data of Object.values(CORE_REGISTRY)) {
+    if (Array.isArray(data.officialDomains) && data.officialDomains.some(d => isSameOrSubdomain(clean, d))) {
+      return data;
+    }
+  }
+  return null;
+}
+
+function extractRootDomain(hostname) {
+  if (!hostname) return null;
+  const clean = hostname.toLowerCase().trim().replace(/^www\./, '');
+  const parts = clean.split('.');
+  if (parts.length <= 2) return clean;
+  const secondLast = parts[parts.length - 2];
+  const multiPartTlds = new Set(['co', 'com', 'org', 'net', 'edu', 'gov', 'ac']);
+  if (parts[parts.length - 1].length === 2 && multiPartTlds.has(secondLast) && parts.length >= 3) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.slice(-2).join('.');
+}
+
+function matchesCompanyAliasInHeaderOrDomain(lowerBody, detectedDomain, candLower) {
+  if (!candLower || candLower.length < 3) return false;
+  if (detectedDomain) {
+    const cleanToken = candLower.replace(/[^a-z0-9]/g, '');
+    if (cleanToken.length >= 3 && detectedDomain.includes(cleanToken)) {
+      return aliasMatchesName(lowerBody, candLower);
+    }
+  }
+  const escaped = candLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headerRegex = new RegExp(`(?:offer\\s+(?:letter|of\\s+employment)|selected\\s+(?:at|for|with|by)|welcome\\s+to|congratulations\\s+from|on\\s+behalf\\s+of|careers?\\s+(?:at|with)|recruitment\\s+(?:at|for|by)|hiring\\s+(?:at|for|by)|employer\\s*[:\\-])[^.!?\\n]{0,40}\\b${escaped}\\b`, 'i');
+  return headerRegex.test(lowerBody);
+}
+
+function findCompanyInRegistry(claimedCompany, detectedDomain, rawText = '', options = {}) {
+  const rawName = (claimedCompany || "").toLowerCase().trim();
+  const cleanName = GENERIC_CLAIMED_NAMES.has(rawName) ? "" : rawName;
+
+  // 1. Direct or parent-domain match on detected email/URL domain
+  const domainMatch = lookupDomainInIndex(detectedDomain);
+  if (domainMatch) {
+    return domainMatch;
+  }
+
+  // 2. Direct exact alias or exact NSE ticker symbol match on claimed company
   if (cleanName && aliasIndex.has(cleanName)) {
     return aliasIndex.get(cleanName);
   }
@@ -194,25 +276,59 @@ function findCompanyInRegistry(claimedCompany, detectedDomain) {
     return symbolIndex.get(cleanName);
   }
 
-  // 3. Substring / word-boundary matching over 2,800+ verified companies
+  // 3. Substring / word-boundary matching over 2,800+ verified companies for claimed company
   if (cleanName && cleanName.length >= 3) {
     for (const comp of TOP_COMPANIES) {
       if (comp.fullName.toLowerCase().includes(cleanName) || (cleanName.length >= 5 && cleanName.includes(comp.fullName.toLowerCase()))) {
         return comp;
       }
       for (const al of comp.aliases) {
-        if (aliasMatchesName(cleanName, al)) {
+        if (al.length >= 3 && aliasMatchesName(cleanName, al)) {
           return comp;
         }
       }
     }
   }
 
-  // 4. Fallback check against CORE_REGISTRY
-  for (const [key, data] of Object.entries(CORE_REGISTRY)) {
-    if (aliasMatchesName(cleanName, key) || (detectedDomain && data.officialDomains.some(d => detectedDomain.endsWith(d)))) {
-      return data;
+  // 4. Fallback check against CORE_REGISTRY for claimed company
+  if (cleanName) {
+    for (const [key, data] of Object.entries(CORE_REGISTRY)) {
+      if (aliasMatchesName(cleanName, key)) {
+        return data;
+      }
     }
+  }
+
+  // 5. Deep text scan against curated domain-backed employers (ignores raw NSE ticker noise)
+  const lowerBody = (rawText || '').toLowerCase();
+  const strictHeaderOnly = Boolean(options.strictCustomEmailContext);
+  if (lowerBody) {
+    let bestComp = null;
+    let bestLen = 0;
+
+    const tryCandidateList = (entries) => {
+      for (const entry of entries) {
+        const candidates = entry._key
+          ? [entry._key, entry.fullName, ...(entry.aliases || [])]
+          : [entry.fullName, ...(entry.aliases || [])];
+        for (const cand of candidates) {
+          const cLower = (cand || '').toLowerCase().trim();
+          if (cLower.length < 3 || cLower.length <= bestLen) continue;
+          const matched = strictHeaderOnly
+            ? matchesCompanyAliasInHeaderOrDomain(lowerBody, detectedDomain, cLower)
+            : aliasMatchesName(lowerBody, cLower);
+          if (matched) {
+            bestComp = entry;
+            bestLen = cLower.length;
+          }
+        }
+      }
+    };
+
+    tryCandidateList(TOP_COMPANIES.filter(c => Array.isArray(c.officialDomains) && c.officialDomains.length > 0));
+    tryCandidateList(Object.entries(CORE_REGISTRY).map(([k, v]) => ({ ...v, _key: k })));
+
+    if (bestComp) return bestComp;
   }
 
   return null;
@@ -222,16 +338,33 @@ function findCompanyInRegistry(claimedCompany, detectedDomain) {
  * Hybrid Verification: Official Corporate Registry (NSE + MCA Public Filings) + Real Live DNS Network Socket
  */
 async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
-  // Extract email address & domain from raw input
-  const emailRegex = /[\w\.-]+@([\w\.-]+)/g;
+  const rawNameTrimmed = (claimedCompany || '').trim();
+  const isGenericClaimed = !rawNameTrimmed || GENERIC_CLAIMED_NAMES.has(rawNameTrimmed.toLowerCase());
+  const content = `${isGenericClaimed ? '' : rawNameTrimmed} ${rawText || ''}`;
+
+  // Extract email addresses
+  const emailRegex = /[\w.+-]+@([\w-]+(?:\.[\w-]+)+)/gi;
   const emails = [];
   let match;
-  const content = `${claimedCompany || ''} ${rawText || ''}`;
   while ((match = emailRegex.exec(content)) !== null) {
     emails.push({ full: match[0], domain: match[1].toLowerCase() });
   }
 
-  const detectedDomain = emails.length > 0 ? emails[0].domain : "No corporate email found (Messaging channel)";
+  // Extract non-platform URL hostnames (corporate portals, career subdomains, spoofed sites)
+  const urlRegex = /(?:https?:\/\/|www\.)([a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi;
+  const corporateUrls = [];
+  while ((match = urlRegex.exec(content)) !== null) {
+    const host = match[1].toLowerCase().replace(/^www\./, '');
+    if (!isPlatformHost(host) && !corporateUrls.includes(host)) {
+      corporateUrls.push(host);
+    }
+  }
+
+  const contactSource = emails.length > 0 ? 'email' : (corporateUrls.length > 0 ? 'url' : 'none');
+  const detectedDomain = contactSource === 'email'
+    ? emails[0].domain
+    : (contactSource === 'url' ? corporateUrls[0] : "No corporate email or domain found");
+
   let isOfficial = false;
   let isLegitimateEntity = false;
   let domainMismatch = false;
@@ -240,22 +373,48 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
   let officialDomain = null;
   let liveDnsResult = null;
   let registeredRoc = 'RoC-Corporate Registry';
-  let registeredName = claimedCompany || 'Unspecified Entity';
+  let registeredName = isGenericClaimed ? 'Unspecified Entity' : rawNameTrimmed;
   let incorporatedDate = null;
   let isinCode = null;
   let nseSymbol = null;
   let registrySource = null;
 
-  // 1. Check if email uses a known public free-mail host
-  const isFreeMail = FREE_EMAIL_PROVIDERS.some(prov => detectedDomain.includes(prov));
+  // 1. Check if contact domain uses a known public free-mail host
+  const isFreeMail = contactSource === 'email' && FREE_EMAIL_PROVIDERS.some(prov => isSameOrSubdomain(detectedDomain, prov));
 
-  // 2. Perform Real Live DNS Socket Lookup if a custom domain was detected
-  if (!isFreeMail && emails.length > 0) {
+  // 2. Match against the 2,800+ Verified Corporate Registry (using domain, claimed name, and body mentions)
+  const matchedEntry = findCompanyInRegistry(
+    claimedCompany,
+    !isFreeMail && contactSource !== 'none' ? detectedDomain : null,
+    rawText,
+    { strictCustomEmailContext: Boolean(contactSource === 'email' && !isFreeMail) }
+  );
+
+  // 3. Perform Real Live DNS Socket Lookup on custom email/URL domain (fallback to root/official domain for URL subdomains)
+  if (!isFreeMail && contactSource !== 'none') {
     liveDnsResult = await performLiveDnsLookup(detectedDomain);
+    if (contactSource === 'url' && liveDnsResult && !liveDnsResult.hasMx) {
+      const fallbackHosts = [];
+      if (matchedEntry && Array.isArray(matchedEntry.officialDomains)) {
+        for (const dom of matchedEntry.officialDomains) {
+          if (isSameOrSubdomain(detectedDomain, dom) && dom !== detectedDomain) {
+            fallbackHosts.push(dom);
+          }
+        }
+      }
+      const rootHost = extractRootDomain(detectedDomain);
+      if (rootHost && rootHost !== detectedDomain && !fallbackHosts.includes(rootHost)) {
+        fallbackHosts.push(rootHost);
+      }
+      for (const fallbackHost of fallbackHosts) {
+        const rootDns = await performLiveDnsLookup(fallbackHost);
+        if (rootDns && rootDns.hasMx) {
+          liveDnsResult = rootDns;
+          break;
+        }
+      }
+    }
   }
-
-  // 3. Match against the 2,800+ Verified Corporate Registry
-  const matchedEntry = findCompanyInRegistry(claimedCompany, !isFreeMail && emails.length > 0 ? detectedDomain : null);
 
   if (matchedEntry) {
     isinCode = matchedEntry.isin || null;
@@ -263,7 +422,7 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     registrySource = matchedEntry.registrySource || 'Official Corporate Registry';
     cinNumber = matchedEntry.cin || (isinCode ? `ISIN:${isinCode}${nseSymbol ? ` (NSE:${nseSymbol})` : ''}` : 'Official Private / MNC Entity');
     registeredRoc = matchedEntry.roc || 'RoC-India';
-    registeredName = matchedEntry.fullName || claimedCompany;
+    registeredName = matchedEntry.fullName || registeredName;
     incorporatedDate = extractIncorpDateFromEntry(matchedEntry);
     const knownDomains = Array.isArray(matchedEntry.officialDomains) ? matchedEntry.officialDomains : [];
     officialDomain = knownDomains[0] || '';
@@ -274,44 +433,58 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
       domainMismatch = true;
       const domainHint = knownDomains.length > 0 ? knownDomains.join(', ') : 'official corporate domain';
       mcaStatus = `❌ Identity Imposter: Claimed corporate entity is ${matchedEntry.fullName} (${cinNumber}), but recruiter reached out from free public email (@${detectedDomain}) instead of ${domainHint}`;
-    } else if (emails.length > 0) {
+    } else if (contactSource !== 'none') {
       const hasKnownDomains = knownDomains.length > 0;
       const domainMatches = hasKnownDomains
-        ? knownDomains.some(dom => detectedDomain.endsWith(dom) || dom.endsWith(detectedDomain))
+        ? knownDomains.some(dom => isSameOrSubdomain(detectedDomain, dom))
         : true; // NSE-listed company without pre-stored website uses live MX verification
 
+      const prefix = contactSource === 'email' ? '@' : '';
       if (domainMatches && liveDnsResult && liveDnsResult.hasMx) {
         isOfficial = true;
         isLegitimateEntity = true;
         domainMismatch = false;
         mcaStatus = `✅ Verified Public Entity: ${registeredName} (${cinNumber}, ${registeredRoc}) | Live Mail Server Verified: ${liveDnsResult.mxServers[0] || 'Active'}`;
-        if (!officialDomain) officialDomain = detectedDomain;
+        if (!officialDomain) officialDomain = extractRootDomain(detectedDomain) || detectedDomain;
       } else if (!domainMatches) {
         isOfficial = false;
         isLegitimateEntity = false;
         domainMismatch = true;
-        mcaStatus = `❌ Domain Mismatch: Contact domain (@${detectedDomain}) does not match official records for ${matchedEntry.fullName} (${knownDomains.join(', ')})`;
+        mcaStatus = `❌ Domain Mismatch: Contact domain (${prefix}${detectedDomain}) does not match official records for ${matchedEntry.fullName} (${knownDomains.join(', ')})`;
       } else {
         isOfficial = false;
         isLegitimateEntity = false;
-        mcaStatus = `❌ Fraudulent Domain: Domain (@${detectedDomain}) failed live DNS mail server resolution (${liveDnsResult ? liveDnsResult.error : 'No MX record'})`;
+        mcaStatus = `❌ Fraudulent Domain: Domain (${prefix}${detectedDomain}) failed live DNS mail server resolution (${liveDnsResult ? liveDnsResult.error : 'No MX record'})`;
       }
     } else {
-      // Matched company name without email provided (e.g. text scan of offer letter)
+      // Matched company name without email or URL provided (e.g. text scan of offer letter)
       isLegitimateEntity = true;
       isOfficial = true;
       mcaStatus = `✅ Known Registered Enterprise: ${matchedEntry.fullName} (${cinNumber}, ${registeredRoc}). Verify application via ${officialDomain || 'official career portal'}.`;
     }
-  } else if (!isFreeMail && emails.length > 0 && liveDnsResult && liveDnsResult.hasMx) {
+  } else if (!isFreeMail && contactSource !== 'none' && liveDnsResult && liveDnsResult.hasMx) {
     // Custom corporate domain with real live MX servers, but not in top listed firms
     isOfficial = true;
     isLegitimateEntity = true;
-    mcaStatus = `ℹ️ Active Corporate Domain: Domain (@${detectedDomain}) verified with live MX mail servers (${liveDnsResult.mxServers[0] || 'Active'}). Verify employer credentials directly before signing offers.`;
-  } else if (!isFreeMail && emails.length > 0 && liveDnsResult && !liveDnsResult.hasMx) {
+    if (isGenericClaimed) {
+      registeredName = extractRootDomain(detectedDomain) || detectedDomain;
+    }
+    mcaStatus = `ℹ️ Active Corporate Domain: Domain (${contactSource === 'email' ? '@' : ''}${detectedDomain}) verified with live MX mail servers (${liveDnsResult.mxServers[0] || 'Active'}). Verify employer credentials directly before signing offers.`;
+  } else if (!isFreeMail && contactSource === 'email' && liveDnsResult && !liveDnsResult.hasMx) {
     isOfficial = false;
     isLegitimateEntity = false;
     mcaStatus = `❌ Non-Existent Domain: Domain (@${detectedDomain}) has no active mail server (DNS: ${liveDnsResult.error || 'NXDOMAIN'})`;
+  } else if (!isFreeMail && contactSource === 'url' && liveDnsResult && !liveDnsResult.hasMx && liveDnsResult.error && liveDnsResult.error.includes('ENOTFOUND')) {
+    isOfficial = false;
+    isLegitimateEntity = false;
+    mcaStatus = `❌ Unresolvable Portal Domain: URL domain (${detectedDomain}) failed DNS resolution (${liveDnsResult.error})`;
+  } else if (isFreeMail) {
+    mcaStatus = `⚠️ Unverified Free-Mail Contact: Recruiter used public webmail (@${detectedDomain}) instead of a corporate domain`;
   }
+
+  const dnsError = liveDnsResult?.error || '';
+  const isTransientDnsError = /timeout|ETIMEOUT|ESERVFAIL|EAI_AGAIN/i.test(dnsError);
+  const dnsDefinitiveFailure = Boolean(contactSource === 'email' && !isFreeMail && liveDnsResult && !liveDnsResult.hasMx && !isTransientDnsError);
 
   return {
     claimedCompany: registeredName,
@@ -319,6 +492,7 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     detectedDomain,
     domainChecked: detectedDomain,
     officialDomain: officialDomain || '',
+    hrEmail: emails.length > 0 ? emails[0].full : '',
     cin: cinNumber,
     isin: isinCode,
     nseSymbol,
@@ -329,6 +503,7 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     isLegitimateRegisteredEntity: isLegitimateEntity,
     isFreeMailProvider: isFreeMail,
     domainMismatch,
+    dnsDefinitiveFailure,
     mcaStatus,
     liveDnsVerified: liveDnsResult ? liveDnsResult.hasMx : false,
     mxValid: liveDnsResult ? liveDnsResult.hasMx : false

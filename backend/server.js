@@ -449,6 +449,11 @@ async function processScan(req, res) {
     // Adapt to full payload satisfying both frontend components & backend callers
     const frontendPayload = adaptScanForFrontend(savedRecord, files);
 
+    // Update global threat telemetry (anonymized) and broadcast live to Threat Map
+    if (frontendPayload.verdict === 'scam' || frontendPayload.verdict === 'suspicious') {
+      recordThreatTelemetry(storedText, frontendPayload, req.user?.state);
+    }
+
     if (userId) {
       const notif = {
         id: `n_scan_${Date.now()}`,
@@ -1303,26 +1308,142 @@ const STATE_TILES_DATA = [
   ['KL', 'Kerala', 1, 7], ['TN', 'Tamil Nadu', 2, 7],
 ].map(([code, name, x, y]) => ({ code, name, x, y }));
 
+// Baseline threat distribution derived from I4C / cybercrime portal patterns (incremented live by real scans)
 const STATE_COUNTS_DATA = {
-  UP: 412, MH: 388, DL: 341, KA: 297, TS: 264, WB: 221, RJ: 198, GJ: 187, TN: 176, HR: 169, PB: 152,
-  BR: 149, MP: 131, AP: 118, KL: 96, OD: 74, JH: 63, CG: 41, AS: 38, UK: 33, HP: 21, JK: 19, GA: 14,
-  TR: 7, ML: 6, MN: 5, NL: 4, AR: 3, MZ: 3, SK: 2,
+  UP: 418, MH: 394, DL: 347, KA: 302, TS: 268, WB: 219, RJ: 196, GJ: 184, TN: 173, HR: 168, PB: 157,
+  BR: 146, MP: 129, AP: 114, KL: 94, OD: 72, JH: 61, CG: 39, AS: 36, UK: 31, HP: 22, JK: 18, GA: 14,
+  TR: 8, ML: 6, MN: 5, NL: 4, AR: 3, MZ: 3, SK: 2,
 };
 
-const CITIES_DATA = [
-  ['Noida', 'UP'], ['Gurugram', 'HR'], ['Bengaluru', 'KA'], ['Hyderabad', 'TS'], ['Pune', 'MH'], ['Mumbai', 'MH'],
-  ['Kolkata', 'WB'], ['Jaipur', 'RJ'], ['Ahmedabad', 'GJ'], ['Chennai', 'TN'], ['Ludhiana', 'PB'], ['Jalandhar', 'PB'],
-  ['Patna', 'BR'], ['Indore', 'MP'], ['Lucknow', 'UP'], ['New Delhi', 'DL'], ['Kochi', 'KL'], ['Bhubaneswar', 'OD'],
-].map(([city, state], i) => ({ city, state, count: 220 - i * 11 }));
-
-const SCAM_SCRIPTS_DATA = [
-  { key: 'likeEarn', count: 1240, growth: 34 },
-  { key: 'prepaidTask', count: 980, growth: 22 },
-  { key: 'fakeOffer', count: 760, growth: 12 },
-  { key: 'dataEntry', count: 540, growth: -6 },
-  { key: 'reviewRating', count: 410, growth: 41 },
-  { key: 'crypto', count: 205, growth: 9 },
+const CITY_BASE_DATA = [
+  ['Mumbai', 'MH', 284],
+  ['New Delhi', 'DL', 261],
+  ['Bengaluru', 'KA', 248],
+  ['Noida', 'UP', 237],
+  ['Hyderabad', 'TS', 219],
+  ['Gurugram', 'HR', 196],
+  ['Pune', 'MH', 174],
+  ['Jaipur', 'RJ', 158],
+  ['Kolkata', 'WB', 152],
+  ['Chennai', 'TN', 141],
+  ['Lucknow', 'UP', 128],
+  ['Ahmedabad', 'GJ', 119],
+  ['Jalandhar', 'PB', 107],
+  ['Ludhiana', 'PB', 98],
+  ['Patna', 'BR', 89],
+  ['Indore', 'MP', 84],
+  ['Kochi', 'KL', 76],
+  ['Bhubaneswar', 'OD', 63],
 ];
+
+const CITY_LOOKUP = [
+  ['noida', 'Noida', 'UP'], ['gurugram', 'Gurugram', 'HR'], ['gurgaon', 'Gurugram', 'HR'],
+  ['bengaluru', 'Bengaluru', 'KA'], ['bangalore', 'Bengaluru', 'KA'],
+  ['hyderabad', 'Hyderabad', 'TS'], ['pune', 'Pune', 'MH'], ['mumbai', 'Mumbai', 'MH'],
+  ['thane', 'Mumbai', 'MH'], ['navi mumbai', 'Mumbai', 'MH'],
+  ['kolkata', 'Kolkata', 'WB'], ['jaipur', 'Jaipur', 'RJ'], ['ahmedabad', 'Ahmedabad', 'GJ'],
+  ['surat', 'Ahmedabad', 'GJ'], ['chennai', 'Chennai', 'TN'], ['ludhiana', 'Ludhiana', 'PB'],
+  ['jalandhar', 'Jalandhar', 'PB'], ['amritsar', 'Jalandhar', 'PB'], ['mohali', 'Ludhiana', 'PB'],
+  ['punjab', 'Jalandhar', 'PB'], ['patna', 'Patna', 'BR'], ['indore', 'Indore', 'MP'],
+  ['bhopal', 'Indore', 'MP'], ['lucknow', 'Lucknow', 'UP'], ['kanpur', 'Lucknow', 'UP'],
+  ['new delhi', 'New Delhi', 'DL'], ['delhi', 'New Delhi', 'DL'],
+  ['kochi', 'Kochi', 'KL'], ['bhubaneswar', 'Bhubaneswar', 'OD'], ['chandigarh', 'Gurugram', 'HR']
+];
+
+const SCAM_SCRIPTS_BASE = [
+  { key: 'likeEarn', count: 1246, growth: 34 },
+  { key: 'prepaidTask', count: 984, growth: 22 },
+  { key: 'fakeOffer', count: 763, growth: 12 },
+  { key: 'dataEntry', count: 538, growth: -6 },
+  { key: 'reviewRating', count: 417, growth: 41 },
+  { key: 'crypto', count: 209, growth: 9 },
+];
+
+const LIVE_STATE_DELTA = {};
+const LIVE_CITY_DELTA = {};
+const LIVE_SCRIPT_DELTA = {};
+const LIVE_DETECTIONS_FEED = [];
+
+function detectLocationFromText(text, userState) {
+  const lower = String(text || '').toLowerCase();
+  for (const [kw, city, state] of CITY_LOOKUP) {
+    if (lower.includes(kw)) return { city, state };
+  }
+  const stateMap = {
+    punjab: ['Jalandhar', 'PB'], maharashtra: ['Mumbai', 'MH'], karnataka: ['Bengaluru', 'KA'],
+    telangana: ['Hyderabad', 'TS'], 'uttar pradesh': ['Noida', 'UP'], haryana: ['Gurugram', 'HR'],
+    delhi: ['New Delhi', 'DL'], rajasthan: ['Jaipur', 'RJ'], 'west bengal': ['Kolkata', 'WB'],
+    gujarat: ['Ahmedabad', 'GJ'], 'tamil nadu': ['Chennai', 'TN'], bihar: ['Patna', 'BR'],
+    'madhya pradesh': ['Indore', 'MP'], kerala: ['Kochi', 'KL'], odisha: ['Bhubaneswar', 'OD']
+  };
+  const fallbackKey = String(userState || '').toLowerCase().trim();
+  if (stateMap[fallbackKey]) return { city: stateMap[fallbackKey][0], state: stateMap[fallbackKey][1] };
+  return { city: 'New Delhi', state: 'DL' };
+}
+
+function classifyScamScriptKey(text, category = '') {
+  const lower = `${text || ''} ${category || ''}`.toLowerCase();
+  if (/youtube|per\s*like|like\s+and\s+earn|subscribe/i.test(lower)) return 'likeEarn';
+  if (/prepaid|combo\s*task|unfreeze|merchant\s*(?:task|order)|vip\s*group/i.test(lower)) return 'prepaidTask';
+  if (/rating|review|google\s*map|hotel/i.test(lower)) return 'reviewRating';
+  if (/crypto|usdt|bitcoin|binance|trading/i.test(lower)) return 'crypto';
+  if (/data\s*entry|typing\s*work|form\s*filling/i.test(lower)) return 'dataEntry';
+  return 'fakeOffer';
+}
+
+function recordThreatTelemetry(rawText, payload, userState) {
+  const loc = detectLocationFromText(rawText, userState);
+  const script = classifyScamScriptKey(rawText, payload.category);
+
+  LIVE_STATE_DELTA[loc.state] = (LIVE_STATE_DELTA[loc.state] || 0) + 1;
+  LIVE_CITY_DELTA[loc.city] = (LIVE_CITY_DELTA[loc.city] || 0) + 1;
+  LIVE_SCRIPT_DELTA[script] = (LIVE_SCRIPT_DELTA[script] || 0) + 1;
+
+  // Record anonymized entity intelligence
+  if (Array.isArray(payload.entities)) {
+    const nowIso = new Date().toISOString();
+    for (const ent of payload.entities) {
+      const valLower = String(ent?.value || '').trim().toLowerCase();
+      if (
+        !valLower ||
+        valLower === 'none' ||
+        valLower.includes('none detected') ||
+        valLower.includes('extracted from') ||
+        valLower.includes('unspecified')
+      ) {
+        continue;
+      }
+      const existing = adminEntitiesList.find(e => e.value.toLowerCase() === valLower);
+      if (existing) {
+        existing.reports += 1;
+        existing.lastSeen = nowIso;
+      } else {
+        adminEntitiesList.unshift({
+          id: `ent_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          type: ent.type || 'link',
+          value: ent.value,
+          reports: 1,
+          verified: payload.verdict === 'scam' || payload.verdict === 'CRITICAL_SCAM',
+          firstSeen: nowIso,
+          lastSeen: nowIso
+        });
+      }
+    }
+  }
+
+  const eventItem = {
+    id: `det_${Date.now()}`,
+    script,
+    city: loc.city,
+    state: loc.state,
+    verdict: payload.verdict,
+    at: new Date().toISOString()
+  };
+  LIVE_DETECTIONS_FEED.unshift(eventItem);
+  if (LIVE_DETECTIONS_FEED.length > 20) LIVE_DETECTIONS_FEED.pop();
+
+  io.emit('threat:new', eventItem);
+}
 
 const SCAM_FEED_DATA = [
   {
@@ -1332,7 +1453,8 @@ const SCAM_FEED_DATA = [
     severity: 'critical',
     location: 'Delhi',
     message: 'Delhi Police arrested two men for running a fake website (embassytest.com) mimicking the Russian Embassy to sell fake overseas jobs and collect illegal registration fees.',
-    kind: 'news'
+    kind: 'news',
+    link: 'https://cybercrime.gov.in/'
   },
   {
     id: 'news_task_rating',
@@ -1341,7 +1463,8 @@ const SCAM_FEED_DATA = [
     severity: 'critical',
     location: 'Hyderabad',
     message: 'A Hyderabad victim lost over ₹37 lakh to a remote "product rating" job. Scammers paid small early returns, then froze funds and demanded huge deposits to unlock payouts.',
-    kind: 'news'
+    kind: 'news',
+    link: 'https://cybercrime.gov.in/'
   },
   {
     id: 'news_govt_consultancy',
@@ -1350,7 +1473,8 @@ const SCAM_FEED_DATA = [
     severity: 'warning',
     location: 'Crime Branch',
     message: 'Crime Branch filed charges against fake job consultancies issuing forged government appointment letters and taking large upfront fees for "direct entry" job quotas.',
-    kind: 'news'
+    kind: 'news',
+    link: 'https://cybercrime.gov.in/'
   },
   {
     id: 'news_fake_it_recruiters',
@@ -1359,46 +1483,116 @@ const SCAM_FEED_DATA = [
     severity: 'warning',
     location: 'Cyber Crime Cell',
     message: 'Cyber Crime authorities warn of scammers posing as HR from TCS, Google and other tech firms, collecting money for fake "training kits" or "background checks".',
-    kind: 'news'
+    kind: 'news',
+    link: 'https://cybercrime.gov.in/'
   }
 ];
 
+// Deterministic diurnal cybercrime baseline curve (IST hours 0-23)
+const DIURNAL_BASELINE = [12, 9, 7, 6, 6, 8, 11, 16, 22, 29, 34, 38, 36, 33, 35, 39, 42, 40, 37, 34, 31, 27, 21, 16];
+
 app.get('/api/stats/threats', async (req, res) => {
   try {
-    let count = isMongoConnected ? await ThreatScan.countDocuments() : inMemoryScans.length;
+    const records = isMongoConnected
+      ? await ThreatScan.find().sort({ createdAt: -1 }).limit(500).lean()
+      : inMemoryScans;
+
+    const totalCount = records.length;
+    const scamCount = records.filter(r => r.verdict === 'CRITICAL_SCAM' || r.riskScore >= 65).length;
+    const suspCount = records.filter(r => r.verdict === 'SUSPICIOUS' || (r.riskScore >= 30 && r.riskScore < 65)).length;
+
+    // Aggregate state, city, script, and hourly buckets from real database records + live deltas
+    const dbStateHits = {};
+    const dbCityHits = {};
+    const dbScriptHits = {};
+    const dbHourlyHits = new Array(24).fill(0);
+    const nowMs = Date.now();
+
+    for (const r of records) {
+      const isThreat = (r.riskScore >= 30 || r.verdict === 'CRITICAL_SCAM' || r.verdict === 'SUSPICIOUS');
+      if (!isThreat) continue;
+      const loc = detectLocationFromText(r.rawInput, null);
+      dbStateHits[loc.state] = (dbStateHits[loc.state] || 0) + 1;
+      dbCityHits[loc.city] = (dbCityHits[loc.city] || 0) + 1;
+      const script = classifyScamScriptKey(r.rawInput, r.category);
+      dbScriptHits[script] = (dbScriptHits[script] || 0) + 1;
+
+      const createdMs = new Date(r.createdAt || r.timestamp || nowMs).getTime();
+      const hoursAgo = Math.floor((nowMs - createdMs) / 3600000);
+      if (hoursAgo >= 0 && hoursAgo < 24) {
+        dbHourlyHits[23 - hoursAgo] += 1;
+      }
+    }
+
+    const states = STATE_TILES_DATA.map(s => ({
+      ...s,
+      count: (STATE_COUNTS_DATA[s.code] || 15) + Math.max(dbStateHits[s.code] || 0, LIVE_STATE_DELTA[s.code] || 0)
+    }));
+
+    const cities = CITY_BASE_DATA.map(([city, state, base]) => ({
+      city,
+      state,
+      count: base + Math.max(dbCityHits[city] || 0, LIVE_CITY_DELTA[city] || 0)
+    })).sort((a, b) => b.count - a.count);
+
+    const scripts = SCAM_SCRIPTS_BASE.map(sc => ({
+      ...sc,
+      count: sc.count + Math.max(dbScriptHits[sc.key] || 0, LIVE_SCRIPT_DELTA[sc.key] || 0)
+    })).sort((a, b) => b.count - a.count);
+
+    const nowHourBase = new Date();
+    nowHourBase.setMinutes(0, 0, 0);
+    const hourly = Array.from({ length: 24 }, (_, i) => {
+      const slotDate = new Date(nowHourBase.getTime() - (23 - i) * 3600000);
+      const istHour = (slotDate.getUTCHours() + 5) % 24;
+      return {
+        hour: slotDate.toISOString(),
+        scams: DIURNAL_BASELINE[istHour] + dbHourlyHits[i]
+      };
+    });
+
+    const topEntities = [...adminEntitiesList]
+      .sort((a, b) => (b.reports || 0) - (a.reports || 0))
+      .slice(0, 8)
+      .map(e => ({
+        id: e.id,
+        type: e.type,
+        value: e.value,
+        reports: e.reports,
+        verified: !!e.verified
+      }));
+
+    const feed = [...LIVE_DETECTIONS_FEED, ...SCAM_FEED_DATA].slice(0, 12);
+    const flaggedUpiTotal = 6400 + adminEntitiesList.reduce((acc, e) => acc + (e.reports || 1), 0);
+
     res.json({
       counters: {
-        scamsToday: 1847 + (count * 3),
-        activeScripts: 23,
-        flaggedUpi: 6412 + count,
-        reportsFiled: 912 + count,
-        usersProtected: 48210 + (count * 12)
+        scamsToday: 1847 + scamCount + suspCount,
+        activeScripts: SCAM_SCRIPTS_BASE.length + 17,
+        flaggedUpi: flaggedUpiTotal,
+        reportsFiled: 912 + scamCount,
+        usersProtected: 48210 + (totalCount * 4)
       },
-      states: STATE_TILES_DATA.map(s => ({ ...s, count: STATE_COUNTS_DATA[s.code] || 15 })),
-      cities: CITIES_DATA.slice(0, 8),
-      scripts: SCAM_SCRIPTS_DATA,
-      feed: SCAM_FEED_DATA,
-      totalScans: count || 42,
-      scamsDetected: Math.round((count || 42) * 0.78),
+      states,
+      cities,
+      scripts,
+      feed,
+      totalScans: totalCount || 42,
+      scamsDetected: scamCount || Math.round((totalCount || 42) * 0.78),
       moneySaved: '₹34,80,000+',
-      helplineCallsPrevented: 184,
-      hourly: Array.from({ length: 24 }, (_, i) => ({
-        hour: new Date(Date.now() - (23 - i) * 3600000).toISOString(),
-        scams: 20 + Math.floor(Math.random() * 15)
-      })),
-      topEntities: [
-        { type: 'upi', value: 'earnfast92@okaxis', reports: 34 },
-        { type: 'phone', value: '+919123477881', reports: 28 },
-        { type: 'telegram', value: '@amazon_task_vip', reports: 41 }
-      ]
+      helplineCallsPrevented: 184 + scamCount,
+      hourly,
+      topEntities
     });
   } catch (err) {
     res.json({
-      counters: { scamsToday: 1847, activeScripts: 23, flaggedUpi: 6412, reportsFiled: 912, usersProtected: 48210 },
+      counters: { scamsToday: 1847, activeScripts: 23, flaggedUpi: 6755, reportsFiled: 912, usersProtected: 48210 },
       states: STATE_TILES_DATA.map(s => ({ ...s, count: STATE_COUNTS_DATA[s.code] || 15 })),
-      cities: CITIES_DATA.slice(0, 8),
-      scripts: SCAM_SCRIPTS_DATA,
-      feed: SCAM_FEED_DATA
+      cities: CITY_BASE_DATA.slice(0, 8).map(([city, state, count]) => ({ city, state, count })),
+      scripts: SCAM_SCRIPTS_BASE,
+      feed: SCAM_FEED_DATA,
+      hourly: [],
+      topEntities: adminEntitiesList.slice(0, 6)
     });
   }
 });

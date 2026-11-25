@@ -20,7 +20,8 @@ Step 2: Detect threat indicators and classify into one of three categories:
    - Using free mail (@gmail.com, @yahoo.com) for corporate enterprise hiring.
 
 3. GENUINE_OFFER (RiskScore 0-15):
-   - Direct, verified corporate career postings from official portals (e.g., career.infosys.com, indeed.com, linkedin official company page) with direct application links, no comment lures, and no financial demands.
+   - Direct, verified corporate career postings or official offer letters from legitimate company domains/portals (e.g., nextstep.tcs.com, careers.infosys.com, wipro.com, indeed.com, linkedin official company page) with no financial demands.
+   - IMPORTANT: Standard anti-fraud disclaimers in genuine offers (e.g., "TCS does not charge any application, processing, or training fees", "Never pay money to anyone", "If anyone demands fees, report it") are SAFETY indicators, NOT red flags. Do NOT classify anti-scam warnings as fee demands, and return "redFlags": [] for clean offers.
 
 Output strict JSON:
 {
@@ -61,6 +62,112 @@ Output strict JSON:
 }
 `;
 
+const TELECOM_OR_COMP_CONTEXT = /\b(?:salary|stipend|ctc|compensation|package|per\s+month|per\s+annum|\/month|\/year|p\.a\.|lpa|annum|billing\s+platform)\b/i;
+
+function splitActiveClauses(rawText) {
+  if (!rawText) return [];
+  const clauses = String(rawText)
+    .split(/[.!?\n;]+|,\s*(?:however|but|only)\b|\b(?:however|but)\b/i)
+    .map(c => c.trim())
+    .filter(Boolean);
+
+  return clauses.filter((clause) => {
+    const isNegatedFeeOrChannel = /\b(?:does\s+not|do\s+not|doesn't|don't|will\s+not|won't|would\s+not|should\s+not|never|not|neither|nor|without|zero|no)\s+(?:\w+\s+){0,8}?(?:charge|ask|collect|demand|require|solicit|take|pay|request|levy|fees?|charges?|deposits?|money|payment|whatsapp|telegram)\b/i.test(clause);
+    const isFraudAdvisory = /\b(?:beware\s+of|caution|disclaimer|fraud\s+alert|important\s+notice)\b[^.!?\n]{0,80}\b(?:fake|fraud|scam|money|fee|charge|deposit|impostor|imposter)\b/i.test(clause);
+    const isUnauthorizedNotice = /\b(?:not|never|no)\s+(?:\w+\s+){0,4}?authori[sz](?:ed?|es?)\b[^.!?\n]{0,80}\b(?:fee|charge|deposit|money|collect)\b/i.test(clause);
+    const isConditionalReport = /\bif\s+(?:anyone|anybody|any\s+person|someone|an\s+agent)\s+(?:\w+\s+){0,6}?(?:asks?|demands?|requests?|charges?|collects?)\b/i.test(clause) ||
+      /\breport\s+(?:it|them|this|immediately|fraud|scam)\s+to\b/i.test(clause);
+    return !(isNegatedFeeOrChannel || isFraudAdvisory || isUnauthorizedNotice || isConditionalReport);
+  });
+}
+
+function evaluateForensicSignals(textContent, mcaInfo, entities = {}) {
+  const activeClauses = splitActiveClauses(textContent);
+  const activeText = activeClauses.join('. ');
+  const scamReasons = [];
+  const suspiciousReasons = [];
+
+  let hasFeeDemand = false;
+  for (const clause of activeClauses) {
+    const explicitOnboardingFee = /\b(?:registration|processing|training|onboarding|courier|document|documentation|id\s*card|joining|background\s+verification|bgv|verification|medical|interview|kit|starter\s*kit|slot|seat|caution|security|insurance|portal|account\s+opening|activation|gst|tds|aml|unfreeze|clearance)\s*(?:fee|fees|charge|charges|deposit|amount|payment)s?\b/i.test(clause) ||
+      /\b(?:fee|charge|deposit|payment)s?\s+(?:for|of)\s+(?:registration|processing|training|onboarding|courier|id\s*card|verification|laptop|kit|joining|slot)\b/i.test(clause) ||
+      /\b(?:laptop|hardware|workstation|macbook|equipment|assets?)\s*(?:security|insurance|deposit|fee|charge|shipping|courier)s?\b/i.test(clause);
+
+    const hasCompContext = TELECOM_OR_COMP_CONTEXT.test(clause);
+    const explicitPayPrompt = (!hasCompContext && /\b(?:kindly|please|must|need\s+to|required\s+to|you\s+pay|send|transfer|deposit|remit)\b[^.!?\n]{0,45}?(?:rs\.?|inr|₹|\$)\s*\d+/i.test(clause)) ||
+      (!hasCompContext && /\b(?:deposit|transfer|send)\s*(?:money|rs\.?|inr|₹|\d{3,6})/i.test(clause)) ||
+      (/\b(?:fee|charge|deposit)\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|\$)\s*\d+/i.test(clause)) ||
+      ((entities.upis || []).length > 0 && /\b(?:pay|transfer|send|deposit|fee|scan|qr)\b/i.test(clause));
+
+    if (explicitOnboardingFee || explicitPayPrompt) {
+      hasFeeDemand = true;
+      break;
+    }
+  }
+
+  if (hasFeeDemand) {
+    scamReasons.push("Demand for advance fee, security deposit, verification charge, or upfront transfer");
+  }
+
+  const hasTaskEngagementScam = (
+    /\b(?:lik(?:e|ing)|subscrib(?:e|ing)|follow(?:ing)?|rat(?:e|ing)|review(?:ing)?)\s+(?:\w+\s+){0,3}?(?:youtube|videos?|shorts?|hotels?|restaurants?|products?|google\s+maps?|instagram|reels?|posts?)\b/i.test(activeText) &&
+    /\b(?:earn|income|payout|commission|per\s+(?:like|task|review|video)|rs\.?|₹|daily|per\s+day)\b/i.test(activeText)
+  ) ||
+    /\b(?:prepaid\s+(?:task|merchant|order|combo|package|vip|plan|deposit|recharge)|combo\s+task|welfare\s+task|merchant\s+task|vip\s+(?:group|mentor|teacher)|unfreeze\s+(?:account|funds?|money|balance)|credit\s+score\s+(?:low|drop|deduct))\b/i.test(activeText) ||
+    (/\b(?:earn|make)\s+(?:rs\.?|inr|₹)?\s*\d[\d,]*(?:\s*[-–to]+\s*\d[\d,]*)?\s*(?:daily|per\s+day|everyday)\b/i.test(activeText) &&
+      /\b(?:telegram|t\.me|whatsapp|wa\.me|task|work\s+from\s+home|part\s+time)\b/i.test(activeText));
+
+  if (hasTaskEngagementScam) {
+    scamReasons.push("Prepaid / digital engagement task scam promising daily payouts via messaging channels");
+  }
+
+  if (/\b(?:reallygreatsite\.com|123\s+anywhere\s+st|lorem\s+ipsum)\b|\[insert\s+(?:name|company|date|signature)\]/i.test(textContent || '')) {
+    scamReasons.push("Placeholder Canva template or forged offer artifacts detected (e.g., reallygreatsite.com / dummy address)");
+  }
+
+  if (mcaInfo.domainMismatch) {
+    scamReasons.push(mcaInfo.mcaStatus);
+  }
+
+  if (mcaInfo.dnsDefinitiveFailure) {
+    scamReasons.push(mcaInfo.mcaStatus);
+  }
+
+  // Suspicious (proxy / unverified / off-platform) signals
+  if (mcaInfo.isFreeMailProvider && !mcaInfo.domainMismatch) {
+    suspiciousReasons.push(mcaInfo.mcaStatus);
+  }
+
+  if (/\bcomment\s*(?:#\w+|below|["']?(?:yes|interested|link)["']?)\b|\b(?:dm|inbox|message)\s+(?:me|us|for\s+link)\b/i.test(activeText)) {
+    suspiciousReasons.push("Engagement bait tactic asking candidates to comment or DM to receive application links");
+  }
+
+  if (
+    (!mcaInfo.isOfficialDomain && /\b(?:whatsapp|wa\.me|telegram|t\.me)\b/i.test(activeText)) ||
+    /\b(?:contact|message|apply|interview|reach\s+out|send\s+(?:cv|resume|details)|join)\b[^.!?\n]{0,40}\b(?:whatsapp|wa\.me|telegram|t\.me)\b/i.test(activeText)
+  ) {
+    suspiciousReasons.push("Directing candidate to unverified WhatsApp or Telegram messaging channels instead of official portals");
+  }
+
+  if (/\b(?:forms\.gle|docs\.google\.com\/forms|bit\.ly|tinyurl\.com)\b/i.test(textContent || '')) {
+    suspiciousReasons.push("Recruitment relies on unverified third-party form or shortened redirect URL");
+  }
+
+  if (
+    /\b(?:typing\s+work|home\s+based\s+(?:typing|job)|no\s+interview\s+direct\s+joining|spot\s+joining\s+offer)\b/i.test(activeText) ||
+    (!mcaInfo.isOfficialDomain && /\b(?:data\s+entry|urgent\s+requirement)\b/i.test(activeText))
+  ) {
+    suspiciousReasons.push("Low-barrier WFH / typing / urgent hiring lure typical of third-party proxy funnels");
+  }
+
+  return {
+    scamReasons: [...new Set(scamReasons)],
+    suspiciousReasons: [...new Set(suspiciousReasons)],
+    hasFeeDemand,
+    hasTaskEngagementScam
+  };
+}
+
 /**
  * Multi-Agent Parallel Execution supporting both Text and Image (Multimodal)
  */
@@ -69,10 +176,11 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   
   // Extract base regex entities if text is available
   const phones = textContent.match(/(?:\+91[\-\s]?)?[6789]\d{9}/g) || [];
-  const upis = (textContent.match(/[\w\.\-]+@[a-zA-Z]{2,}/g) || []).filter(u => 
-    !["gmail.com", "yahoo.com", "outlook.com"].some(p => u.includes(p))
-  );
-  const telegramHandles = textContent.match(/t\.me\/[\w\_]+|@[\w\_]+/g) || [];
+  const upis = textContent.match(/(?:^|[\s:(])([\w.\-]+@(?:ok(?:icici|axis|hdfcbank|sbi)|ybl|ibl|axl|paytm|upi|apl|pingpay|fbl|kotak|indus|ikwik|waicici|waaxis|wahdfcbank|wasbi))\b/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [];
+  const telegramHandles = [
+    ...(textContent.match(/\bt\.me\/[\w_]+/gi) || []),
+    ...(textContent.match(/(?:^|[\s:(])(@[\w_]{4,})(?![\w.]*\.[a-z]{2,})/gi)?.map(s => s.replace(/^[\s:(]+/, '')) || [])
+  ];
 
   if (apiKey && !apiKey.includes("YOUR_")) {
     try {
@@ -130,23 +238,48 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       // Perform Real Live DNS & MCA Verification on detected company/emails
       const mcaResult = await verifyCompanyAgainstMCA(parsedA.claimedCompany, combinedAnalysisText);
 
-      // Determine Final Calibrated Verdict & Score
-      let finalRiskScore = parsedA.riskScore || 50;
+      // Determine Final Calibrated Verdict & Score (guardrailed by MCA/DNS & forensic signals)
+      const forensic = evaluateForensicSignals(combinedAnalysisText, mcaResult, { phones, upis, telegramHandles });
+      let finalRiskScore = Number.isFinite(Number(parsedA.riskScore)) ? Number(parsedA.riskScore) : 50;
       let finalVerdict = parsedA.verdict || "SUSPICIOUS";
+      let mergedRedFlags = Array.isArray(parsedA.redFlags) ? [...parsedA.redFlags] : [];
 
-      if (parsedA.redFlags && parsedA.redFlags.length > 0) {
-        if (finalRiskScore < 50) finalRiskScore = 55;
+      if (forensic.scamReasons.length > 0) {
+        finalVerdict = "CRITICAL_SCAM";
+        finalRiskScore = Math.max(finalRiskScore, 88);
+        for (const reason of forensic.scamReasons) {
+          if (!mergedRedFlags.includes(reason)) mergedRedFlags.push(reason);
+        }
+      } else if (forensic.suspiciousReasons.length > 0) {
+        if (finalVerdict === "GENUINE_OFFER") {
+          finalVerdict = "SUSPICIOUS";
+          finalRiskScore = Math.max(finalRiskScore, 62);
+        }
+        for (const reason of forensic.suspiciousReasons) {
+          if (!mergedRedFlags.includes(reason)) mergedRedFlags.push(reason);
+        }
+      } else if (finalVerdict === "GENUINE_OFFER" && mcaResult.isOfficialDomain && mcaResult.liveDnsVerified) {
+        // Verified company with no forensic triggers keeps low risk and clears false positive disclaimer flags
+        mergedRedFlags = [];
+        finalRiskScore = Math.max(2, Math.min(finalRiskScore, 10));
       }
 
-      if (finalVerdict === "GENUINE_OFFER" && parsedA.redFlags.length === 0) {
-        finalRiskScore = Math.min(finalRiskScore, 12);
+      if (finalVerdict !== "GENUINE_OFFER" && mergedRedFlags.length > 0 && finalRiskScore < 55) {
+        finalRiskScore = 55;
+      }
+
+      if (finalVerdict === "GENUINE_OFFER" && mergedRedFlags.length === 0) {
+        finalRiskScore = Math.max(2, Math.min(finalRiskScore, 12));
       } else if (finalVerdict === "CRITICAL_SCAM") {
-        finalRiskScore = Math.max(finalRiskScore, 80);
+        finalRiskScore = Math.max(finalRiskScore, 82);
       } else if (finalVerdict === "SUSPICIOUS") {
         finalRiskScore = Math.max(finalRiskScore, 55);
       }
 
       const isGenuine = finalVerdict === "GENUINE_OFFER";
+      const overriddenCategory = (!isGenuine && (parsedA.verdict === "GENUINE_OFFER" || !parsedA.category))
+        ? (finalVerdict === "CRITICAL_SCAM" ? "Identity Impersonation / Financial Job Scam" : "Unofficial Proxy / Unverified Channel")
+        : (parsedA.category || (isGenuine ? "Authentic Corporate Career Posting" : "Suspicious Recruitment"));
 
       return {
         multiAgentConsensus: {
@@ -157,23 +290,23 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         },
         riskScore: finalRiskScore,
         verdict: finalVerdict,
-        category: parsedA.category || "Career Opportunity",
+        category: overriddenCategory,
         extractedText: ocrExtracted || textContent,
         scamStage: {
-          currentStage: isGenuine ? 0 : (parsedA.currentStage || 1),
-          stageName: isGenuine ? "Safe / Non-Scam" : (parsedA.stageName || "Stage 1: Hook / Funnel"),
-          stageDescription: isGenuine ? "Legitimate verified job posting." : (parsedA.stageDescription || "Suspicious hiring pattern detected."),
-          predictedNextMove: isGenuine ? "Apply through the official career portal. No security threats or upfront payments required." : (parsedB.predictedNextMove || "Do not transfer money or engage through unofficial comment sections.")
+          currentStage: isGenuine ? 0 : Math.max(1, parsedA.currentStage || (finalVerdict === "CRITICAL_SCAM" ? 2 : 1)),
+          stageName: isGenuine ? "Safe / Non-Scam" : (parsedA.verdict === "GENUINE_OFFER" ? (finalVerdict === "CRITICAL_SCAM" ? "Stage 2: Identity Spoof / Advance-Fee Trap" : "Stage 1: Hook / Funnel") : (parsedA.stageName || "Stage 1: Hook / Funnel")),
+          stageDescription: isGenuine ? "Legitimate verified job posting." : (parsedA.verdict === "GENUINE_OFFER" ? (forensic.scamReasons[0] || forensic.suspiciousReasons[0]) : (parsedA.stageDescription || "Suspicious hiring pattern detected.")),
+          predictedNextMove: isGenuine ? "Apply through the official career portal. No security threats or upfront payments required." : (parsedA.verdict === "GENUINE_OFFER" ? "Do not share confidential documents, click unverified links, or transfer any fee." : (parsedB.predictedNextMove || "Do not transfer money or engage through unofficial comment sections."))
         },
-        behavioralAnalysis: parsedB.victimGroomingAnalysis,
+        behavioralAnalysis: isGenuine ? (parsedB.victimGroomingAnalysis || "No psychological grooming or financial coercion detected.") : (parsedA.verdict === "GENUINE_OFFER" ? (forensic.scamReasons[0] || forensic.suspiciousReasons[0]) : parsedB.victimGroomingAnalysis),
         companyVerification: mcaResult,
-        redFlags: parsedA.redFlags || [],
+        redFlags: mergedRedFlags,
         dossier1930: isGenuine ? null : {
           phoneNumbers: (parsedA.phoneNumbers && parsedA.phoneNumbers.length > 0) ? parsedA.phoneNumbers : (phones.length > 0 ? phones : ["Extracted from text"]),
           telegramHandles: (parsedA.telegramHandles && parsedA.telegramHandles.length > 0) ? parsedA.telegramHandles : (telegramHandles.length > 0 ? telegramHandles : ["None"]),
           upiIds: (parsedA.upiIds && parsedA.upiIds.length > 0) ? parsedA.upiIds : (upis.length > 0 ? upis : ["None detected"]),
           impersonatedEntity: mcaResult.claimedCompany || parsedA.claimedCompany || "Unspecified Entity",
-          policeNarrative: parsedB.policeNarrative || "Victim targeted by an online employment task scam demanding financial deposits."
+          policeNarrative: (parsedA.verdict === "GENUINE_OFFER" ? `Forensic verification flagged high-risk recruitment deception involving ${mcaResult.claimedCompany || 'claimed entity'}.` : parsedB.policeNarrative) || "Victim targeted by an online employment task scam demanding financial deposits."
         }
       };
     } catch (err) {
@@ -182,63 +315,28 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   }
 
   // Intelligent Deterministic Heuristic Fallback Engine
-  const lowerText = textContent.toLowerCase();
-
-  // Cross check MCA/NSE corporate registry on fallback first
-  const companyMatch = textContent.match(/(?:company|from|at|join|with)\s*[:\-]?\s*([A-Z][A-Za-z0-9\s&\.]{2,40})/);
+  const companyMatch = textContent.match(/(?:company|employer|offer\s+(?:letter|from)|selected\s+(?:at|for)|from|at|join|with)\s*[:\-]?\s*([A-Z][A-Za-z0-9\s&.]{2,45})/);
   const guessedCompany = companyMatch ? companyMatch[1].trim() : (phones[0] ? 'Unverified Recruiter' : 'Online Task Merchant');
   const mcaFallback = await verifyCompanyAgainstMCA(guessedCompany, textContent);
+  const forensicFallback = evaluateForensicSignals(textContent, mcaFallback, { phones, upis, telegramHandles });
 
-  const isScam =
-    /lik(?:e|ing)\s+youtube|youtube\s+(?:like|video)|per\s+like|like\s+and\s+earn/i.test(lowerText) ||
-    /(?:registration|processing|training|onboarding|courier|document)\s*(?:fee|charge|deposit)/i.test(lowerText) ||
-    /(?:laptop|hardware|workstation|equipment)\s*(?:security|insurance|deposit)/i.test(lowerText) ||
-    lowerText.includes('prepaid') ||
-    lowerText.includes('combo task') ||
-    lowerText.includes('unfreeze') ||
-    lowerText.includes('vip group') ||
-    lowerText.includes('merchant task') ||
-    /deposit\s*(?:money|rs|₹|\d)/i.test(lowerText) ||
-    (lowerText.includes('earn') && (lowerText.includes('daily') || lowerText.includes('per day') || lowerText.includes('telegram') || lowerText.includes('t.me'))) ||
-    (mcaFallback.domainMismatch && mcaFallback.isFreeMailProvider);
-
-  const isSuspicious =
-    !isScam && (
-      lowerText.includes('whatsapp') ||
-      lowerText.includes('telegram') ||
-      lowerText.includes('t.me') ||
-      lowerText.includes('comment #') ||
-      lowerText.includes('typing work') ||
-      lowerText.includes('data entry') ||
-      lowerText.includes('urgent requirement') ||
-      mcaFallback.domainMismatch ||
-      mcaFallback.isFreeMailProvider
-    );
+  const isScam = forensicFallback.scamReasons.length > 0;
+  const isSuspicious = !isScam && forensicFallback.suspiciousReasons.length > 0;
 
   const verdict = isScam ? 'CRITICAL_SCAM' : (isSuspicious ? 'SUSPICIOUS' : 'GENUINE_OFFER');
-  const riskScore = isScam ? 92 : (isSuspicious ? 65 : (mcaFallback.isOfficialDomain ? 5 : 12));
+  const riskScore = isScam
+    ? Math.min(98, 86 + forensicFallback.scamReasons.length * 4)
+    : (isSuspicious
+      ? Math.min(75, 58 + forensicFallback.suspiciousReasons.length * 5)
+      : (mcaFallback.isOfficialDomain && mcaFallback.liveDnsVerified ? 5 : 12));
 
-  const fallbackRedFlags = [];
-  if (isScam) {
-    if (/lik(?:e|ing)\s+youtube|youtube\s+video|per\s+like|earn.*daily/i.test(lowerText)) {
-      fallbackRedFlags.push("Unrealistic daily earnings promised for simple digital engagement tasks");
-    }
-    if (/prepaid|deposit|fee|charge|insurance|combo task|unfreeze/i.test(lowerText)) {
-      fallbackRedFlags.push("Demand for advance fee, security deposit, or prepaid merchant task payment");
-    }
-    if (lowerText.includes('t.me') || lowerText.includes('telegram')) {
-      fallbackRedFlags.push("Directing candidate to encrypted Telegram channel to evade moderation");
-    }
-    if (mcaFallback.domainMismatch) {
-      fallbackRedFlags.push(mcaFallback.mcaStatus);
-    }
-  } else if (isSuspicious) {
-    if (mcaFallback.domainMismatch || mcaFallback.isFreeMailProvider) {
-      fallbackRedFlags.push(mcaFallback.mcaStatus);
-    } else {
-      fallbackRedFlags.push("Unofficial communication channel or third-party proxy recruitment bait");
-    }
-  }
+  const fallbackRedFlags = isScam
+    ? forensicFallback.scamReasons
+    : (isSuspicious ? forensicFallback.suspiciousReasons : []);
+
+  const fallbackCategory = isScam
+    ? (forensicFallback.hasTaskEngagementScam ? "Prepaid Task Scam / Engagement Fraud" : (mcaFallback.domainMismatch ? "Corporate Brand Impersonation / Advance-Fee Fraud" : "Financial Employment Fraud"))
+    : (isSuspicious ? "Unofficial Proxy Recruitment / Unverified Channel" : "Authentic Corporate Career Posting");
 
   return {
     multiAgentConsensus: {
@@ -249,19 +347,21 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
     },
     riskScore,
     verdict,
-    category: isScam ? "Prepaid Task Scam / Financial Fraud" : (isSuspicious ? "Unofficial Proxy Recruitment Bait" : "Authentic Corporate Career Posting"),
+    category: fallbackCategory,
     extractedText: textContent,
     scamStage: {
-      currentStage: isScam ? 1 : 0,
-      stageName: isScam ? "Stage 1: Engagement Bait / Task Funnel" : "Safe / Verified Opportunity",
-      stageDescription: isScam ? "Digital task scam funneling users into prepaid deposits." : "Standard career communication pattern with no financial demands.",
+      currentStage: isScam ? 2 : (isSuspicious ? 1 : 0),
+      stageName: isScam ? "Stage 2: Advance-Fee / Impersonation Trap" : (isSuspicious ? "Stage 1: Unverified Proxy Funnel" : "Safe / Verified Opportunity"),
+      stageDescription: isScam
+        ? forensicFallback.scamReasons[0]
+        : (isSuspicious ? forensicFallback.suspiciousReasons[0] : "Standard career communication pattern with no financial demands."),
       predictedNextMove: isScam
-        ? "The perpetrator will pay small trial payouts, then transition to prepaid merchant tasks requiring escalating deposits to unfreeze money."
-        : "Proceed through official verified company portals."
+        ? "Do not pay deposits, verification fees, or click forged links; scammers escalate into prepaid tasks or repeated fee demands."
+        : (isSuspicious ? "Verify directly on the official corporate career portal before sharing documents or messaging third-party handles." : "Proceed through official verified company portals.")
     },
     behavioralAnalysis: isScam
-      ? "Uses low-barrier engagement lures or advance-fee pretexts before escalating financial demands."
-      : "Standard career communication pattern.",
+      ? "Uses brand impersonation, advance-fee pretexts, or engagement lures to pressure candidates before extracting money."
+      : (isSuspicious ? "Relies on unverified channels, free webmail, or engagement bait outside corporate systems." : "Standard career communication pattern."),
     companyVerification: mcaFallback,
     redFlags: fallbackRedFlags,
     dossier1930: isScam ? {
@@ -269,7 +369,7 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       telegramHandles: telegramHandles.length > 0 ? telegramHandles : ["None"],
       upiIds: upis.length > 0 ? upis : ["None detected"],
       impersonatedEntity: mcaFallback.claimedCompany || "Online Task Merchant",
-      policeNarrative: "Victim targeted by an online employment task scam demanding financial deposits. Candidate promised daily earnings for digital tasks and directed to external communication channels."
+      policeNarrative: `Victim targeted by ${fallbackCategory.toLowerCase()} (${forensicFallback.scamReasons[0]}).`
     } : null
   };
 }

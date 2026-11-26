@@ -16,7 +16,7 @@ const bcrypt = require('bcryptjs');
 const { analyzeThreat, analyzeScreenCapture } = require('./services/aiEngine');
 const { handleChat } = require('./services/chatEngine');
 const { verifyCompanyAgainstMCA, performLiveDnsLookup } = require('./services/mcaVerifier');
-const { sendOtp, verifyOtp } = require('./services/emailService');
+const { sendOtp, verifyOtp, getEmailStatus } = require('./services/emailService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'trustmatrix_super_secure_jwt_secret_key_2026';
 
@@ -331,6 +331,7 @@ app.get('/api/health', (req, res) => {
     system: "CyberShield AI Backend (CTBF-AI-11)",
     chatModel: process.env.GROQ_API_KEY ? "Groq (openai/gpt-oss-120b)" : "Gemini 3.5 Flash Lite",
     database: isMongoConnected ? "MongoDB Atlas (Connected)" : "Local In-Memory Mode",
+    emailService: getEmailStatus(),
     features: ["Text Analysis", "Multimodal Image/Screenshot OCR", "Live DNS MX Audit", "MCA Verification", "AI Chatbot"]
   });
 });
@@ -1175,8 +1176,15 @@ app.post('/api/auth/resend-otp', async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
     const result = await sendOtp(cleanEmail, purpose || 'mfa');
+    if (!result.emailSent) {
+      return res.status(503).json({
+        error: result.errorReason || 'Email verification service is unavailable on the server. Please verify email transport configuration.'
+      });
+    }
     res.json({
       success: true,
+      emailSent: true,
+      transport: result.transport,
       message: 'A new 6-digit code has been dispatched to your email.'
     });
   } catch (err) {
@@ -1214,13 +1222,21 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     const otpResult = await sendOtp(cleanEmail, 'reset_password');
 
-    console.log(`🔑 [Password Reset] Reset code sent to ${cleanEmail}`);
+    if (!otpResult.emailSent) {
+      console.warn(`⚠️ [Password Reset] OTP email could not be delivered to ${cleanEmail}: ${otpResult.errorReason || 'unconfigured'}`);
+      return res.status(503).json({
+        success: false,
+        emailSent: false,
+        error: 'Email delivery service is unavailable on this server right now. Configure HTTPS Email (EMAIL_WEBHOOK_URL / BREVO_API_KEY / RESEND_API_KEY) or SMTP on the backend to send reset codes.'
+      });
+    }
+
+    console.log(`🔑 [Password Reset] Reset code sent to ${cleanEmail} via ${otpResult.transport}`);
     res.json({
       success: true,
-      emailSent: otpResult.emailSent,
-      message: otpResult.emailSent
-        ? 'Password reset code has been sent to your email.'
-        : 'Password reset code generated. Note: Configure EMAIL_PASS in backend/.env for inbox delivery.'
+      emailSent: true,
+      transport: otpResult.transport,
+      message: 'Password reset code has been sent to your email.'
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to initiate password reset' });

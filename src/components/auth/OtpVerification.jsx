@@ -108,7 +108,7 @@ export default function OtpVerification({
       inputsRef.current[0]?.focus();
       toast.success('A new 6-digit code has been sent to your email.');
     } catch (err) {
-      toast.error('Could not resend code. Please try again.');
+      toast.error(err.response?.data?.error || 'Could not resend code. Please try again.');
     } finally {
       setResending(false);
     }

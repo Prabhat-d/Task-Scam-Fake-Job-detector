@@ -416,6 +416,9 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     }
   }
 
+  const dnsError = liveDnsResult?.error || '';
+  const isTransientDnsError = /timeout|ETIMEOUT|ESERVFAIL|EAI_AGAIN/i.test(dnsError);
+
   if (matchedEntry) {
     isinCode = matchedEntry.isin || null;
     nseSymbol = matchedEntry.nseSymbol || null;
@@ -451,6 +454,12 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
         isLegitimateEntity = false;
         domainMismatch = true;
         mcaStatus = `❌ Domain Mismatch: Contact domain (${prefix}${detectedDomain}) does not match official records for ${matchedEntry.fullName} (${knownDomains.join(', ')})`;
+      } else if (hasKnownDomains && isTransientDnsError) {
+        // Registry-verified official domain should not be marked fraudulent if local Wi-Fi/DNS timed out
+        isOfficial = true;
+        isLegitimateEntity = true;
+        domainMismatch = false;
+        mcaStatus = `✅ Verified Public Entity: ${registeredName} (${cinNumber}, ${registeredRoc}) | DNS Mail Check Timed Out`;
       } else {
         isOfficial = false;
         isLegitimateEntity = false;
@@ -473,7 +482,9 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
   } else if (!isFreeMail && contactSource === 'email' && liveDnsResult && !liveDnsResult.hasMx) {
     isOfficial = false;
     isLegitimateEntity = false;
-    mcaStatus = `❌ Non-Existent Domain: Domain (@${detectedDomain}) has no active mail server (DNS: ${liveDnsResult.error || 'NXDOMAIN'})`;
+    mcaStatus = isTransientDnsError
+      ? `⚠️ DNS Mail Check Timed Out for (@${detectedDomain}) — retry when network stabilizes`
+      : `❌ Non-Existent Domain: Domain (@${detectedDomain}) has no active mail server (DNS: ${liveDnsResult.error || 'NXDOMAIN'})`;
   } else if (!isFreeMail && contactSource === 'url' && liveDnsResult && !liveDnsResult.hasMx && liveDnsResult.error && liveDnsResult.error.includes('ENOTFOUND')) {
     isOfficial = false;
     isLegitimateEntity = false;
@@ -482,8 +493,6 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     mcaStatus = `⚠️ Unverified Free-Mail Contact: Recruiter used public webmail (@${detectedDomain}) instead of a corporate domain`;
   }
 
-  const dnsError = liveDnsResult?.error || '';
-  const isTransientDnsError = /timeout|ETIMEOUT|ESERVFAIL|EAI_AGAIN/i.test(dnsError);
   const dnsDefinitiveFailure = Boolean(contactSource === 'email' && !isFreeMail && liveDnsResult && !liveDnsResult.hasMx && !isTransientDnsError);
 
   return {
@@ -506,7 +515,7 @@ async function verifyCompanyAgainstMCA(claimedCompany, rawText) {
     dnsDefinitiveFailure,
     mcaStatus,
     liveDnsVerified: liveDnsResult ? liveDnsResult.hasMx : false,
-    mxValid: liveDnsResult ? liveDnsResult.hasMx : false
+    mxValid: isTransientDnsError ? null : (liveDnsResult ? liveDnsResult.hasMx : false)
   };
 }
 

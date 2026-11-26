@@ -75,7 +75,8 @@ const ThreatScanSchema = new mongoose.Schema({
   files: [{
     name: String,
     size: Number,
-    mimetype: String
+    mimetype: String,
+    thumb: String
   }],
   redFlags: [{
     type: String

@@ -314,7 +314,9 @@ function adaptScanForFrontend(savedRecord, files = []) {
       id: `${scanId}_f${idx}`,
       name: f.originalname || f.name || 'document',
       size: f.size || 0,
-      type: f.mimetype || f.type || 'image/jpeg'
+      type: f.mimetype || f.type || 'image/jpeg',
+      thumb: f.thumb || savedRecord.files?.[idx]?.thumb || null,
+      url: f.url || savedRecord.files?.[idx]?.url || null
     })),
     dossier1930: savedRecord.dossier1930
   };
@@ -410,12 +412,13 @@ async function processScan(req, res) {
       return res.status(400).json({ error: "Please provide text, links, or an uploaded screenshot/letter." });
     }
 
-    // Run Multimodal AI & MCA Verification
-    const analysis = await analyzeThreat(text, process.env.GEMINI_API_KEY, imageBuffer, mimeType);
-    const savedFiles = files.map(f => ({
+    // Run Multimodal AI & MCA Verification (internally enhances/deblurs images first)
+    const { enhancedPreview, ...analysis } = await analyzeThreat(text, process.env.GEMINI_API_KEY, imageBuffer, mimeType);
+    const savedFiles = files.map((f, idx) => ({
       name: f.originalname || 'document',
       size: f.size || 0,
-      mimetype: f.mimetype || 'application/octet-stream'
+      mimetype: f.mimetype || 'application/octet-stream',
+      thumb: idx === 0 && enhancedPreview ? enhancedPreview : null
     }));
 
     // Save to Database (MongoDB Atlas) scoped to authenticated user
@@ -463,7 +466,7 @@ async function processScan(req, res) {
 
     const scanId = savedRecord.scanId || savedRecord._id?.toString();
     // Adapt to full payload satisfying both frontend components & backend callers
-    const frontendPayload = adaptScanForFrontend(savedRecord, files);
+    const frontendPayload = adaptScanForFrontend(savedRecord, savedFiles);
 
     // Update global threat telemetry (anonymized) and broadcast live to Threat Map
     if (frontendPayload.verdict === 'scam' || frontendPayload.verdict === 'suspicious') {

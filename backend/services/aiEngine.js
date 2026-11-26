@@ -1,4 +1,5 @@
 const { verifyCompanyAgainstMCA } = require("./mcaVerifier");
+const { enhanceImageForScanning } = require("./imageEnhancer");
 
 // PROMPT 1: Rapid Entity, Pattern & Forensic Threat Extraction (Model A)
 const PATTERN_EXTRACTION_PROMPT = `
@@ -254,6 +255,24 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   let ocrConfidence = 100;
   const promptInputText = hasRealUserText ? cleanedRawText : "Please transcribe and analyze this uploaded job offer or recruitment screenshot.";
 
+  // Internally upscale, normalize lighting/contrast, and deblur image before running Vision or OCR
+  let visionBuffer = imageBuffer;
+  let visionMimeType = mimeType || "image/jpeg";
+  let ocrBuffer = imageBuffer;
+  let imageEnhancement = null;
+  let enhancedPreview = null;
+
+  if (imageBuffer) {
+    const enhanced = await enhanceImageForScanning(imageBuffer, mimeType);
+    if (enhanced) {
+      visionBuffer = enhanced.visionBuffer;
+      visionMimeType = enhanced.visionMimeType;
+      ocrBuffer = enhanced.ocrBuffer;
+      imageEnhancement = enhanced.metadata;
+      enhancedPreview = enhanced.previewDataUrl;
+    }
+  }
+
   if (apiKey && !apiKey.includes("YOUR_")) {
     try {
       const { GoogleGenAI } = await import("@google/genai");
@@ -261,11 +280,11 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
 
       const buildParts = (promptText, includeImage = true) => {
         const parts = [{ text: `${promptText}\n\nUSER INPUT / METADATA:\n${promptInputText}` }];
-        if (includeImage && imageBuffer) {
+        if (includeImage && visionBuffer) {
           parts.push({
             inlineData: {
-              data: imageBuffer.toString("base64"),
-              mimeType: mimeType || "image/jpeg"
+              data: visionBuffer.toString("base64"),
+              mimeType: visionMimeType
             }
           });
         }
@@ -392,6 +411,8 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         behavioralAnalysis: isGenuine ? (parsedB.victimGroomingAnalysis || "No psychological grooming or financial coercion detected.") : (parsedA.verdict === "GENUINE_OFFER" ? (forensic.scamReasons[0] || forensic.suspiciousReasons[0]) : parsedB.victimGroomingAnalysis),
         companyVerification: mcaResult,
         redFlags: mergedRedFlags,
+        imageEnhancement,
+        enhancedPreview,
         dossier1930: isGenuine ? null : {
           phoneNumbers: (parsedA.phoneNumbers && parsedA.phoneNumbers.length > 0) ? parsedA.phoneNumbers : (phones.length > 0 ? phones : ["Extracted from text"]),
           telegramHandles: (parsedA.telegramHandles && parsedA.telegramHandles.length > 0) ? parsedA.telegramHandles : (telegramHandles.length > 0 ? telegramHandles : ["None"]),
@@ -405,9 +426,9 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
     }
   }
 
-  // If an image was uploaded and Gemini failed, attempt local Tesseract OCR before falling back to heuristics
-  if (imageBuffer) {
-    const localOcr = await extractTextViaLocalOcr(imageBuffer);
+  // If an image was uploaded and Gemini failed, attempt local Tesseract OCR on the enhanced/deblurred OCR buffer
+  if (ocrBuffer) {
+    const localOcr = await extractTextViaLocalOcr(ocrBuffer);
     ocrConfidence = localOcr.confidence;
     if (localOcr.text) {
       effectiveText = cleanedRawText ? `${cleanedRawText}\n${localOcr.text}` : localOcr.text;
@@ -437,6 +458,8 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       behavioralAnalysis: "Automated OCR could not extract text from this screenshot. Verify sender domain and MCA registration manually before responding.",
       companyVerification: emptyMca,
       redFlags: ["Could not extract text from screenshot automatically — verify company email, official career URL, and never pay any fee"],
+      imageEnhancement,
+      enhancedPreview,
       dossier1930: null
     };
   }
@@ -498,6 +521,8 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       : (isSuspicious ? "Relies on unverified channels, free webmail, or engagement bait outside corporate systems." : "Standard career communication pattern."),
     companyVerification: mcaFallback,
     redFlags: fallbackRedFlags,
+    imageEnhancement,
+    enhancedPreview,
     dossier1930: isScam ? {
       phoneNumbers: phones.length > 0 ? phones : ["Extracted from text"],
       telegramHandles: telegramHandles.length > 0 ? telegramHandles : ["None"],

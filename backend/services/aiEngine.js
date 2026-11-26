@@ -180,48 +180,78 @@ function extractEntitiesFromText(text) {
   return { phones, upis, telegramHandles };
 }
 
-async function extractTextViaGroqVision(imageBuffer, mimeType) {
+function parseJsonSafe(rawText) {
+  const cleaned = String(rawText || '')
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    }
+    throw new Error('Invalid JSON returned by AI model');
+  }
+}
+
+async function generateBehavioralWithGroq(analysisText) {
   const groqKey = process.env.GROQ_API_KEY;
-  if (!imageBuffer || !groqKey || groqKey.includes('YOUR_')) return '';
+  if (!analysisText || !groqKey || groqKey.includes('YOUR_')) return null;
   try {
     const Groq = require('groq-sdk');
     const groq = new Groq({ apiKey: groqKey });
-    const dataUrl = `data:${mimeType || 'image/jpeg'};base64,${imageBuffer.toString('base64')}`;
     const completion = await Promise.race([
       groq.chat.completions.create({
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        temperature: 0,
-        max_tokens: 900,
+        model: 'openai/gpt-oss-120b',
+        temperature: 0.1,
+        response_format: { type: 'json_object' },
         messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'Transcribe ALL visible text in this job offer / recruitment screenshot verbatim (company name, job title, salary, URLs, emails, phone numbers, disclaimers). Return only the extracted plain text.'
-              },
-              { type: 'image_url', image_url: { url: dataUrl } }
-            ]
-          }
+          { role: 'system', content: BEHAVIORAL_PREDICTION_PROMPT },
+          { role: 'user', content: analysisText }
         ]
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Groq vision timed out')), 15000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Groq behavioral call timed out')), 7000))
     ]);
-    return (completion.choices?.[0]?.message?.content || '').trim();
+    return parseJsonSafe(completion.choices?.[0]?.message?.content);
   } catch (e) {
-    console.warn('⚠️ Groq vision OCR fallback unavailable:', e.message);
-    return '';
+    console.warn('⚠️ Groq behavioral predictor fallback:', e.message);
+    return null;
+  }
+}
+
+async function extractTextViaLocalOcr(imageBuffer) {
+  if (!imageBuffer) return { text: '', confidence: 0 };
+  try {
+    const os = require('os');
+    const Tesseract = require('tesseract.js');
+    const res = await Promise.race([
+      Tesseract.recognize(imageBuffer, 'eng', { cachePath: os.tmpdir() }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Tesseract OCR timed out after 20000ms')), 20000))
+    ]);
+    return {
+      text: (res?.data?.text || '').trim(),
+      confidence: Number(res?.data?.confidence || 0)
+    };
+  } catch (e) {
+    console.warn('⚠️ Local Tesseract OCR fallback failed:', e.message);
+    return { text: '', confidence: 0 };
   }
 }
 
 /**
- * Multi-Agent Parallel Execution supporting both Text and Image (Multimodal)
+ * Multi-Agent Execution supporting both Text and Image (Multimodal)
  */
 async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "image/png") {
   // Never feed synthetic "[Uploaded Image: WhatsApp Image ...]" filename tags into scam keyword heuristics
   const cleanedRawText = String(rawText || '').replace(/\[Uploaded Image:[^\]]*\]/gi, '').trim();
   const hasRealUserText = cleanedRawText.length > 0;
   let effectiveText = cleanedRawText;
+  let ocrConfidence = 100;
   const promptInputText = hasRealUserText ? cleanedRawText : "Please transcribe and analyze this uploaded job offer or recruitment screenshot.";
 
   if (apiKey && !apiKey.includes("YOUR_")) {
@@ -229,9 +259,9 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey });
 
-      const buildParts = (promptText) => {
+      const buildParts = (promptText, includeImage = true) => {
         const parts = [{ text: `${promptText}\n\nUSER INPUT / METADATA:\n${promptInputText}` }];
-        if (imageBuffer) {
+        if (includeImage && imageBuffer) {
           parts.push({
             inlineData: {
               data: imageBuffer.toString("base64"),
@@ -242,16 +272,25 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         return parts;
       };
 
+      const withTimeout = (promise, ms) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`AI generation timed out after ${ms}ms`)), ms))
+        ]);
+
       const callGeminiWithFallback = async (parts) => {
-        const models = ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
+        const models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
         let lastErr = null;
         for (const model of models) {
           try {
-            return await ai.models.generateContent({
-              model,
-              contents: parts,
-              config: { responseMimeType: "application/json" }
-            });
+            return await withTimeout(
+              ai.models.generateContent({
+                model,
+                contents: parts,
+                config: { responseMimeType: "application/json" }
+              }),
+              10000
+            );
           } catch (e) {
             lastErr = e;
           }
@@ -259,28 +298,36 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
         throw lastErr;
       };
 
-      const timeoutMs = imageBuffer ? 25000 : 12000;
-      const withTimeout = (promise, ms) =>
-        Promise.race([
-          promise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error(`AI generation timed out after ${ms}ms`)), ms))
-        ]);
-
-      // Run BOTH models in parallel with automatic model fallback
-      const [resModelA, resModelB] = await withTimeout(Promise.all([
-        callGeminiWithFallback(buildParts(PATTERN_EXTRACTION_PROMPT)),
-        callGeminiWithFallback(buildParts(BEHAVIORAL_PREDICTION_PROMPT))
-      ]), timeoutMs);
-
-      const parsedA = JSON.parse(resModelA.text);
-      const parsedB = JSON.parse(resModelB.text);
+      // Primary single-image vision call (conserves free-tier quota and avoids concurrent rate bursts)
+      const resModelA = await callGeminiWithFallback(buildParts(PATTERN_EXTRACTION_PROMPT, true));
+      const parsedA = parseJsonSafe(resModelA.text);
 
       const ocrExtracted = parsedA.ocrText || "";
       const combinedAnalysisText = `${cleanedRawText}\n${ocrExtracted} ${(parsedA.redFlags || []).join(" ")}`.trim();
       const { phones, upis, telegramHandles } = extractEntitiesFromText(combinedAnalysisText);
 
-      // Perform Real Live DNS & MCA Verification on detected company/emails
-      const mcaResult = await verifyCompanyAgainstMCA(parsedA.claimedCompany, combinedAnalysisText);
+      // Run behavioral predictor (Groq LPU or Gemini text-only) and MCA/DNS verification in parallel; behavioral failures never drop Model A OCR
+      const [mcaResult, groqBehavioral] = await Promise.all([
+        verifyCompanyAgainstMCA(parsedA.claimedCompany, combinedAnalysisText),
+        generateBehavioralWithGroq(combinedAnalysisText)
+      ]);
+
+      let parsedB = groqBehavioral || {};
+      if (!parsedB.victimGroomingAnalysis && !groqBehavioral) {
+        try {
+          const resModelB = await withTimeout(
+            ai.models.generateContent({
+              model: "gemini-3.1-flash-lite",
+              contents: [{ text: `${BEHAVIORAL_PREDICTION_PROMPT}\n\nEXTRACTED CONTENT:\n${combinedAnalysisText}` }],
+              config: { responseMimeType: "application/json" }
+            }),
+            8000
+          );
+          parsedB = parseJsonSafe(resModelB.text);
+        } catch {
+          parsedB = {};
+        }
+      }
 
       // Determine Final Calibrated Verdict & Score (guardrailed by MCA/DNS & forensic signals)
       const forensic = evaluateForensicSignals(combinedAnalysisText, mcaResult, { phones, upis, telegramHandles });
@@ -358,11 +405,12 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
     }
   }
 
-  // If an image was uploaded and Gemini failed, attempt Groq Vision OCR before falling back to heuristics
+  // If an image was uploaded and Gemini failed, attempt local Tesseract OCR before falling back to heuristics
   if (imageBuffer) {
-    const groqOcrText = await extractTextViaGroqVision(imageBuffer, mimeType);
-    if (groqOcrText) {
-      effectiveText = cleanedRawText ? `${cleanedRawText}\n${groqOcrText}` : groqOcrText;
+    const localOcr = await extractTextViaLocalOcr(imageBuffer);
+    ocrConfidence = localOcr.confidence;
+    if (localOcr.text) {
+      effectiveText = cleanedRawText ? `${cleanedRawText}\n${localOcr.text}` : localOcr.text;
     }
   }
 
@@ -402,13 +450,18 @@ async function analyzeThreat(rawText, apiKey, imageBuffer = null, mimeType = "im
   const forensicFallback = evaluateForensicSignals(textContent, mcaFallback, { phones, upis, telegramHandles });
 
   const isScam = forensicFallback.scamReasons.length > 0;
-  const isSuspicious = !isScam && forensicFallback.suspiciousReasons.length > 0;
+  let isSuspicious = !isScam && forensicFallback.suspiciousReasons.length > 0;
+  const lowOcrQualityWarning = Boolean(imageBuffer && !hasRealUserText && ocrConfidence < 65 && !isScam && !isSuspicious);
+  if (lowOcrQualityWarning) {
+    isSuspicious = true;
+    forensicFallback.suspiciousReasons.push("Low-resolution screenshot produced partial OCR text — paste message text or upload a sharper image to confirm sender authenticity");
+  }
 
   const verdict = isScam ? 'CRITICAL_SCAM' : (isSuspicious ? 'SUSPICIOUS' : 'GENUINE_OFFER');
   const riskScore = isScam
     ? Math.min(98, 86 + forensicFallback.scamReasons.length * 4)
     : (isSuspicious
-      ? Math.min(75, 58 + forensicFallback.suspiciousReasons.length * 5)
+      ? (lowOcrQualityWarning ? 52 : Math.min(75, 58 + forensicFallback.suspiciousReasons.length * 5))
       : (mcaFallback.isOfficialDomain && mcaFallback.liveDnsVerified ? 5 : 12));
 
   const fallbackRedFlags = isScam
